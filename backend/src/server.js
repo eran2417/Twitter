@@ -12,6 +12,8 @@ const { rateLimiter } = require('./middleware/rateLimiter');
 const db = require('./database/pool');
 const redisClient = require('./services/redis');
 const kafkaProducer = require('./services/kafka/producer');
+const elasticsearch = require('./services/elasticsearch/client');
+const searchConsumer = require('./services/kafka/searchConsumer');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -19,6 +21,7 @@ const userRoutes = require('./routes/users');
 const tweetRoutes = require('./routes/tweets');
 const timelineRoutes = require('./routes/timeline');
 const followRoutes = require('./routes/follows');
+const searchRoutes = require('./routes/search');
 
 const app = express();
 const httpServer = createServer(app);
@@ -58,7 +61,8 @@ app.get('/health', async (req, res) => {
       services: {
         database: 'connected',
         redis: 'connected',
-        kafka: kafkaProducer.isConnected() ? 'connected' : 'disconnected'
+        kafka: kafkaProducer.isConnected() ? 'connected' : 'disconnected',
+        elasticsearch: elasticsearch.isConnected() ? 'connected' : 'disconnected'
       }
     });
   } catch (error) {
@@ -76,6 +80,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/tweets', tweetRoutes);
 app.use('/api/timeline', timelineRoutes);
 app.use('/api/follows', followRoutes);
+app.use('/api/search', searchRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -153,6 +158,18 @@ const startServer = async () => {
     // Test Redis connection
     await redisClient.ping();
     logger.info('Redis connected');
+    
+    // Initialize Elasticsearch
+    try {
+      await elasticsearch.connect();
+      logger.info('Elasticsearch connected');
+      
+      // Start Kafka consumer for search indexing
+      await searchConsumer.start();
+      logger.info('Search consumer started');
+    } catch (esError) {
+      logger.warn('Elasticsearch not available, search features disabled:', esError.message);
+    }
     
     httpServer.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
