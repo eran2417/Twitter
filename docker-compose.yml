@@ -1,0 +1,206 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Primary (Master) - Write Database
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: twitter-postgres-primary
+    environment:
+      POSTGRES_DB: twitter
+      POSTGRES_USER: twitter_user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+      - ./database/init-primary.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./database/partitioning.sql:/docker-entrypoint-initdb.d/02-partitioning.sql
+    networks:
+      - twitter-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twitter_user -d twitter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Replica (Read Replica)
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: twitter-postgres-replica
+    environment:
+      POSTGRES_DB: twitter
+      POSTGRES_USER: twitter_user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+      - ./database/postgresql-replica.conf:/etc/postgresql/postgresql.conf
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - twitter-network
+
+  # Redis - Caching Layer
+  redis:
+    image: redis:7-alpine
+    container_name: twitter-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - twitter-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper - Required for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: twitter-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - twitter-network
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+
+  # Kafka - Message Queue for Event Streaming
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: twitter-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    networks:
+      - twitter-network
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Schema Registry - Avro Schema Management
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: twitter-schema-registry
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - twitter-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Backend API Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: twitter-backend
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      # Database
+      DB_PRIMARY_HOST: postgres-primary
+      DB_PRIMARY_PORT: 5432
+      DB_REPLICA_HOST: postgres-replica
+      DB_REPLICA_PORT: 5432
+      DB_NAME: twitter
+      DB_USER: twitter_user
+      DB_PASSWORD: password
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Kafka
+      KAFKA_BROKERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      # JWT
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      JWT_EXPIRE: 7d
+      # CORS
+      FRONTEND_URL: http://localhost:3000
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    networks:
+      - twitter-network
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+  # Frontend React Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: twitter-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:3001
+      REACT_APP_WS_URL: ws://localhost:3001
+    depends_on:
+      - backend
+    networks:
+      - twitter-network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+networks:
+  twitter-network:
+    driver: bridge
+
+volumes:
+  postgres-primary-data:
+  postgres-replica-data:
+  redis-data:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:

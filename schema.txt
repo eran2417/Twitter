@@ -1,0 +1,55 @@
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(15) UNIQUE NOT NULL,
+    email VARCHAR(254) UNIQUE NOT NULL,
+    display_name VARCHAR(50) NOT NULL,
+    bio TEXT,
+    avatar_url TEXT,
+    verified BOOLEAN DEFAULT FALSE,
+    follower_count INTEGER DEFAULT 0,
+    following_count INTEGER DEFAULT 0,
+    tweet_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE follows (
+    id BIGSERIAL PRIMARY KEY,
+    follower_id BIGINT NOT NULL REFERENCES users(id),
+    following_id BIGINT NOT NULL REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(follower_id, following_id),
+    CHECK (follower_id != following_id)
+);
+
+CREATE TABLE tweets (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    content TEXT NOT NULL CHECK (length(content) <= 280),
+    reply_to_tweet_id BIGINT REFERENCES tweets(id),
+    media_urls TEXT[],
+    hashtags TEXT[],
+    mentions BIGINT[],
+    like_count INTEGER DEFAULT 0,
+    retweet_count INTEGER DEFAULT 0,
+    reply_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Timeline queries: "Show me recent tweets from people I follow"
+CREATE INDEX idx_tweets_timeline ON tweets (user_id, created_at DESC);
+
+-- Follower lookup: "Who follows this user?"
+CREATE INDEX idx_follows_follower ON follows (following_id, created_at DESC);
+
+-- Following lookup: "Who does this user follow?"
+CREATE INDEX idx_follows_following ON follows (follower_id, created_at DESC);
+
+-- Search optimization: "Find tweets mentioning @username"
+CREATE INDEX idx_tweets_mentions ON tweets USING GIN (mentions);
+
+CREATE INDEX idx_active_users ON users (created_at) 
+WHERE created_at > NOW() - INTERVAL '1 year';
+
+

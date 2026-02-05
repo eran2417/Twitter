@@ -1,0 +1,43 @@
+{
+  "type": "record",
+  "name": "UserRegistered",
+  "namespace": "com.twitter.events",
+  "doc": "Event emitted when a new user registers",
+  "fields": [
+    {
+      "name": "eventType",
+      "type": "string",
+      "default": "user.registered"
+    },
+    {
+      "name": "timestamp",
+      "type": "string",
+      "doc": "ISO 8601 timestamp"
+    },
+    {
+      "name": "userId",
+      "type": "long",
+      "doc": "Unique identifier for the user"
+    },
+    {
+      "name": "username",
+      "type": "string",
+      "doc": "Username (3-15 characters)"
+    },
+    {
+      "name": "email",
+      "type": "string",
+      "doc": "User email address"
+    },
+    {
+      "name": "displayName",
+      "type": "string",
+      "doc": "User's display name"
+    },
+    {
+      "name": "createdAt",
+      "type": "string",
+      "doc": "Registration timestamp"
+    }
+  ]
+}
