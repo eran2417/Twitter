@@ -4,7 +4,7 @@ const logger = require('../utils/logger');
 // Primary database connection (for writes)
 const primaryPool = new Pool({
   host: process.env.DB_PRIMARY_HOST || 'localhost',
-  port: process.env.DB_PRIMARY_PORT || 5432,
+  port: process.env.DB_PRIMARY_PORT || 5434,
   database: process.env.DB_NAME || 'twitter',
   user: process.env.DB_USER || 'twitter_user',
   password: process.env.DB_PASSWORD || 'password',

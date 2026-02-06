@@ -43,7 +43,7 @@ router.post('/register',
 
         const user = userResult.rows[0];
 
-        // Publish event to Kafka
+        // Publish event to Kafka for Elasticsearch indexing
         try {
           await kafkaProducer.sendEvent('user-events', [{
             key: user.id.toString(),
@@ -51,9 +51,14 @@ router.post('/register',
               eventType: kafkaProducer.Events.USER_REGISTERED,
               timestamp: new Date().toISOString(),
               data: {
-                userId: user.id,
+                id: user.id,
                 username: user.username,
-                email: user.email
+                display_name: user.display_name,
+                bio: user.bio || '',
+                created_at: user.created_at,
+                follower_count: user.follower_count || 0,
+                following_count: user.following_count || 0,
+                tweet_count: user.tweet_count || 0
               }
             })
           }]);

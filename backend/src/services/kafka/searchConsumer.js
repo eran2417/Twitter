@@ -107,11 +107,11 @@ const start = async () => {
     
     // Subscribe to topics
     await consumer.subscribe({
-      topics: ['tweets', 'tweet-interactions', 'user-interactions'],
+      topics: ['tweets', 'tweet-interactions', 'user-interactions', 'user-events'],
       fromBeginning: false
     });
     
-    logger.info('Subscribed to topics: tweets, tweet-interactions, user-interactions');
+    logger.info('Subscribed to topics: tweets, tweet-interactions, user-interactions, user-events');
     
     // Start consuming
     await consumer.run({
@@ -123,7 +123,7 @@ const start = async () => {
             await processTweetEvent(message);
           } else if (topic === 'tweet-interactions') {
             await processTweetEvent(message);
-          } else if (topic === 'user-interactions') {
+          } else if (topic === 'user-interactions' || topic === 'user-events') {
             await processUserEvent(message);
           }
         } catch (error) {

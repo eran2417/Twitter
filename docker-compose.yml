@@ -15,6 +15,12 @@ services:
       - postgres-primary-data:/var/lib/postgresql/data
       - ./database/init-primary.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./database/partitioning.sql:/docker-entrypoint-initdb.d/02-partitioning.sql
+      - ./database/postgresql-primary.conf:/etc/postgresql/postgresql.conf
+      - ./database/pg_hba_primary.conf:/etc/postgresql/pg_hba.conf
+    command: >
+      postgres 
+      -c config_file=/etc/postgresql/postgresql.conf 
+      -c hba_file=/etc/postgresql/pg_hba.conf
     networks:
       - twitter-network
     healthcheck:
@@ -23,23 +29,24 @@ services:
       timeout: 5s
       retries: 5
 
-  # PostgreSQL Replica (Read Replica)
+  # PostgreSQL Replica (Read Replica) - Streaming Replication
   postgres-replica:
     image: postgres:15-alpine
     container_name: twitter-postgres-replica
     environment:
-      POSTGRES_DB: twitter
-      POSTGRES_USER: twitter_user
-      POSTGRES_PASSWORD: password
+      PGUSER: twitter_user
+      PGPASSWORD: password
     ports:
       - "5433:5432"
     volumes:
       - postgres-replica-data:/var/lib/postgresql/data
       - ./database/postgresql-replica.conf:/etc/postgresql/postgresql.conf
+      - ./database/setup-replication.sh:/docker-entrypoint-initdb.d/setup-replication.sh
     depends_on:
       postgres-primary:
         condition: service_healthy
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    entrypoint: /bin/bash
+    command: /docker-entrypoint-initdb.d/setup-replication.sh
     networks:
       - twitter-network
 

@@ -1,3 +1,30 @@
+/*
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     POST TWEET - FULL JOURNEY                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. Browser sends: POST /api/tweets { "content": "Hello World!" }       │
+│     │                                                                   │
+│  2. │──► helmet() ──► cors() ──► compression() ──► json()              │
+│     │    (security)  (allow)   (compress)       (parse body)           │
+│     │                                                                   │
+│  3. │──► morgan() ──► rateLimiter() ──► auth middleware                │
+│     │    (log)       (100 req/15min)   (verify JWT token)              │
+│     │                                                                   │
+│  4. │──► Route: POST /api/tweets                                        │
+│     │    │                                                              │
+│     │    ├──► Check Redis cache (maybe invalidate old data)            │
+│     │    ├──► Insert into PostgreSQL (partitioned table)               │
+│     │    ├──► Update tweet_count via trigger                           │
+│     │    ├──► Send Kafka event: { type: 'tweet.created', ... }         │
+│     │    ├──► Kafka consumer indexes to Elasticsearch                  │
+│     │    └──► WebSocket: io.emit('new-tweet', tweetData)               │
+│     │                                                                   │
+│  5. │──► Response: 201 Created { id: 123, content: "Hello World!" }    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+*/
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -31,6 +58,28 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST']
   }
 });
+
+/*
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        MIDDLEWARE PIPELINE                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Request  ──►  helmet  ──►  cors  ──►  compression  ──►  json parser   │
+│     │            │           │             │                 │          │
+│     │       Add security  Allow     Compress         Parse JSON         │
+│     │        headers     cross-     responses        request body       │
+│     │                    origin                                         │
+│     │                                                                   │
+│     └──►  urlencoded  ──►  morgan  ──►  rateLimiter  ──►  Route Handler │
+│               │              │              │                  │        │
+│          Parse form      Log the       Limit requests     Handle API    │
+│            data          request       (100/15min)          call        │
+│                                                                         │
+│                                                                 ◄───────┤
+│  Response  ◄─────────────────────────────────────────────────────       │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+*/
 
 // Middleware
 app.use(helmet());
@@ -89,6 +138,34 @@ app.use((req, res) => {
 
 // Error handling middleware
 app.use(errorHandler);
+
+/*
+┌─────────────┐         WebSocket         ┌─────────────┐
+│  Frontend   │ ────────────────────────► │   Backend   │
+│ (Browser)   │                          │ (server.js) │
+└─────┬───────┘                          └─────┬───────┘
+      │                                         │
+      │ socket.emit('join-timeline', userId)     │
+      │─────────────────────────────────────────►│
+      │                                         │
+      │                                         │
+      │                             socket.join('timeline-userId')
+      │                                         │
+      │                                         ▼
+      │                           ┌─────────────────────────────┐
+      │                           │  Room: timeline-userId      │
+      │                           └─────────────────────────────┘
+      │                                         │
+      │                                         │
+      │        io.to('timeline-userId').emit('new-tweet', data)
+      │◄─────────────────────────────────────────│
+      │                                         │
+      ▼                                         ▼
+┌─────────────┐                          ┌─────────────┐
+│  Frontend   │◄──────────────────────── │   Backend   │
+│ (Browser)   │      Receives update     │ (server.js) │
+└─────────────┘                          └─────────────┘
+*/
 
 // WebSocket for real-time updates
 io.on('connection', (socket) => {
