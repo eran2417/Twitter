@@ -1,6 +1,7 @@
 const { Kafka, logLevel } = require('kafkajs');
 const logger = require('../../utils/logger');
 const elasticsearch = require('../elasticsearch/client');
+const schemaRegistry = require('../../schemas/schemaRegistry');
 
 const kafka = new Kafka({
   clientId: process.env.KAFKA_CLIENT_ID || 'twitter-search-consumer',
@@ -21,35 +22,83 @@ const consumer = kafka.consumer({
 let isRunning = false;
 
 /**
+ * Check if message is Avro-encoded (has magic byte 0x00 prefix)
+ */
+const isAvroMessage = (buffer) => {
+  return buffer && buffer.length > 5 && buffer[0] === 0x00;
+};
+
+/**
+ * Decode message - handles both Avro (Schema Registry) and JSON formats
+ */
+const decodeMessage = async (message) => {
+  const value = message.value;
+  
+  // Check if it's Avro-encoded (starts with magic byte 0x00)
+  if (isAvroMessage(value)) {
+    try {
+      const decoded = await schemaRegistry.decode(value);
+      logger.debug('Decoded Avro message:', decoded);
+      return decoded;
+    } catch (error) {
+      logger.error('Avro decode error:', error);
+      throw error;
+    }
+  }
+  
+  // Fallback to JSON parsing (backwards compatibility)
+  try {
+    return JSON.parse(value.toString());
+  } catch (error) {
+    logger.error('JSON parse error:', error);
+    throw error;
+  }
+};
+
+/**
  * Process tweet events and index/update in Elasticsearch
  */
 const processTweetEvent = async (message) => {
   try {
-    const event = JSON.parse(message.value.toString());
+    const event = await decodeMessage(message);
     const eventType = event.eventType;
     
-    logger.info(`Processing event: ${eventType}`, { tweetId: event.data?.id });
+    logger.info(`Processing event: ${eventType}`);
     
     switch (eventType) {
       case 'tweet.created':
-        await elasticsearch.indexTweet(event.data);
-        logger.info(`Indexed new tweet ${event.data.id}`);
+        // Avro message has flattened structure
+        const tweetData = {
+          id: event.tweetId,
+          user_id: event.userId,
+          content: event.content,
+          reply_to_tweet_id: event.replyToTweetId,
+          media_urls: event.mediaUrls,
+          hashtags: event.hashtags,
+          mentions: event.mentions,
+          timestamp: event.timestamp
+        };
+        await elasticsearch.indexTweet(tweetData);
+        logger.info(`Indexed new tweet ${event.tweetId}`);
         break;
         
       case 'tweet.deleted':
-        await elasticsearch.deleteTweet(event.data.tweetId);
-        logger.info(`Deleted tweet ${event.data.tweetId} from index`);
+        await elasticsearch.deleteTweet(event.tweetId);
+        logger.info(`Deleted tweet ${event.tweetId} from index`);
         break;
         
+      // Handle interaction types (enum values from Avro schema)
+      case 'LIKE':
+      case 'UNLIKE':
       case 'tweet.liked':
       case 'tweet.unliked':
-        // Update like count - in production you'd fetch the actual count
-        // For now, we'll skip count updates via Kafka and rely on periodic sync
-        logger.info(`Like event for tweet ${event.data.tweetId}`);
+        logger.info(`Like event for tweet ${event.tweetId}`);
         break;
         
+      case 'RETWEET':
+      case 'UNRETWEET':
       case 'tweet.retweeted':
-        logger.info(`Retweet event for tweet ${event.data.tweetId}`);
+        logger.info(`Retweet event for tweet ${event.tweetId}`);
         break;
         
       default:
@@ -66,21 +115,28 @@ const processTweetEvent = async (message) => {
  */
 const processUserEvent = async (message) => {
   try {
-    const event = JSON.parse(message.value.toString());
+    const event = await decodeMessage(message);
     const eventType = event.eventType;
     
     logger.info(`Processing user event: ${eventType}`);
     
     switch (eventType) {
       case 'user.registered':
-        await elasticsearch.indexUser(event.data);
-        logger.info(`Indexed new user ${event.data.id}`);
+        // Avro message has flattened structure
+        const userData = {
+          id: event.userId,
+          username: event.username,
+          email: event.email,
+          display_name: event.displayName,
+          created_at: event.createdAt
+        };
+        await elasticsearch.indexUser(userData);
+        logger.info(`Indexed new user ${event.userId}`);
         break;
         
       case 'user.followed':
       case 'user.unfollowed':
-        // Could update follower counts here
-        logger.info(`Follow event: ${event.data.followerId} -> ${event.data.followingId}`);
+        logger.info(`Follow event: ${event.followerId} -> ${event.followingId}`);
         break;
         
       default:
@@ -97,7 +153,11 @@ const processUserEvent = async (message) => {
  */
 const start = async () => {
   try {
-    // Connect to Elasticsearch first
+    // Connect to Schema Registry first
+    await schemaRegistry.connect();
+    logger.info('Schema Registry connected for consumer');
+    
+    // Connect to Elasticsearch
     await elasticsearch.connect();
     logger.info('Elasticsearch connected for consumer');
     

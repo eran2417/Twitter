@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { searchAPI, followAPI, tweetAPI } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import TweetCard from '../components/TweetCard'
+import toast from 'react-hot-toast'
 
 export default function SearchPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -58,6 +59,10 @@ export default function SearchPage() {
     mutationFn: (userId) => followAPI.follow(userId),
     onSuccess: () => {
       queryClient.invalidateQueries(['search', 'users'])
+      toast.success('User followed!')
+    },
+    onError: (error) => {
+      toast.error(error.response?.data?.error || 'Failed to follow user')
     }
   })
   
@@ -66,6 +71,10 @@ export default function SearchPage() {
     mutationFn: (userId) => followAPI.unfollow(userId),
     onSuccess: () => {
       queryClient.invalidateQueries(['search', 'users'])
+      toast.success('User unfollowed')
+    },
+    onError: (error) => {
+      toast.error(error.response?.data?.error || 'Failed to unfollow user')
     }
   })
   

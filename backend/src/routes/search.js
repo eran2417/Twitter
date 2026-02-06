@@ -76,19 +76,25 @@ router.get('/users', optionalAuth, async (req, res) => {
     
     // Add following status if authenticated
     if (req.user && results.users.length > 0) {
+      // Filter out current user from results
+      results.users = results.users.filter(u => u.id !== req.user.userId.toString());
+      results.total = results.users.length;
+      
       const userIds = results.users.map(u => u.id);
       
-      const followsResult = await pool.query(
-        'SELECT following_id FROM follows WHERE follower_id = $1 AND following_id = ANY($2)',
-        [req.user.userId, userIds]
-      );
-      const followingIds = new Set(followsResult.rows.map(r => r.following_id.toString()));
-      
-      results.users = results.users.map(user => ({
-        ...user,
-        isFollowing: followingIds.has(user.id),
-        isCurrentUser: user.id === req.user.userId.toString()
-      }));
+      if (userIds.length > 0) {
+        const followsResult = await pool.query(
+          'SELECT following_id FROM follows WHERE follower_id = $1 AND following_id = ANY($2)',
+          [req.user.userId, userIds]
+        );
+        const followingIds = new Set(followsResult.rows.map(r => r.following_id.toString()));
+        
+        results.users = results.users.map(user => ({
+          ...user,
+          isFollowing: followingIds.has(user.id),
+          isCurrentUser: false
+        }));
+      }
     }
     
     res.json(results);

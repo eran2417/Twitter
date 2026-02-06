@@ -55,9 +55,10 @@
       "name": "mentions",
       "type": {
         "type": "array",
-        "items": "long"
+        "items": "string"
       },
-      "default": []
+      "default": [],
+      "doc": "Usernames mentioned in the tweet"
     },
     {
       "name": "createdAt",
