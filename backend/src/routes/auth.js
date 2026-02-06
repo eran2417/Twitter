@@ -43,20 +43,15 @@ router.post('/register',
 
         const user = userResult.rows[0];
 
-        // Publish event to Kafka
+        // Publish event to Kafka with Avro encoding via Schema Registry
         try {
-          await kafkaProducer.sendEvent('user-events', [{
-            key: user.id.toString(),
-            value: JSON.stringify({
-              eventType: kafkaProducer.Events.USER_REGISTERED,
-              timestamp: new Date().toISOString(),
-              data: {
-                userId: user.id,
-                username: user.username,
-                email: user.email
-              }
-            })
-          }]);
+          await kafkaProducer.publishUserRegistered({
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            display_name: user.display_name,
+            created_at: user.created_at
+          });
         } catch (kafkaError) {
           logger.error('Failed to publish user registration event:', kafkaError);
           // Continue even if Kafka fails

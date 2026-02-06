@@ -71,4 +71,12 @@ export const followAPI = {
   getFollowing: (userId, params) => api.get(`/follows/${userId}/following`, { params }),
 }
 
+export const searchAPI = {
+  searchTweets: (q, params) => api.get('/search/tweets', { params: { q, ...params } }),
+  searchUsers: (q, params) => api.get('/search/users', { params: { q, ...params } }),
+  getTrending: (params) => api.get('/search/trending', { params }),
+  reindexTweets: () => api.post('/search/reindex'),
+  reindexUsers: () => api.post('/search/reindex-users'),
+}
+
 export default api

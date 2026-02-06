@@ -32,16 +32,25 @@ This application demonstrates production-grade distributed system concepts:
 - **Event-Driven Architecture**: Asynchronous processing
 
 #### 4. **Avro Schema Registry**
+- Confluent Schema Registry integration
 - Versioned schemas for all events
 - Type-safe message serialization
 - Schema evolution support
+- Binary Avro encoding with Schema ID prefix
 
-#### 5. **Transactions & Consistency**
+#### 5. **Full-Text Search with Elasticsearch**
+- **Tweet Search**: Full-text search with relevance scoring
+- **User Search**: Search by username or display name
+- **Trending Hashtags**: Real-time hashtag analytics
+- **Kibana Dashboard**: Visual analytics and monitoring
+- **Real-time Indexing**: Kafka consumer indexes data automatically
+
+#### 6. **Transactions & Consistency**
 - PostgreSQL ACID transactions
 - Kafka idempotent producers
 - Optimistic concurrency control
 
-#### 6. **Scalability Patterns**
+#### 7. **Scalability Patterns**
 - Horizontal database partitioning
 - Connection pooling (primary + replica pools)
 - Stateless API servers
@@ -54,7 +63,9 @@ This application demonstrates production-grade distributed system concepts:
 - **PostgreSQL 15**: Primary data store with partitioning
 - **Redis**: Caching and session management
 - **Kafka + Zookeeper**: Event streaming
-- **Avro**: Schema serialization
+- **Confluent Schema Registry**: Avro schema management
+- **Elasticsearch 8.11**: Full-text search engine
+- **Kibana 8.11**: Search analytics & visualization
 - **WebSockets (Socket.io)**: Real-time updates
 
 ### Frontend
@@ -67,7 +78,9 @@ This application demonstrates production-grade distributed system concepts:
 
 ### Infrastructure
 - **Docker + Docker Compose**: Containerization
-- **Schema Registry**: Avro schema management
+- **Confluent Schema Registry**: Avro schema management
+- **Elasticsearch Cluster**: Search infrastructure
+- **Kibana**: Monitoring & visualization UI
 
 ## 📁 Project Structure
 
@@ -124,12 +137,14 @@ docker-compose up -d
 ```
 
 This will start:
-- PostgreSQL Primary (port 5432)
+- PostgreSQL Primary (port 5434)
 - PostgreSQL Replica (port 5433)
 - Redis (port 6379)
 - Zookeeper (port 2181)
 - Kafka (ports 9092, 29092)
 - Schema Registry (port 8081)
+- Elasticsearch (port 9200)
+- Kibana (port 5601)
 - Backend API (port 3001)
 - Frontend (port 3000)
 
@@ -153,6 +168,8 @@ chmod +x scripts/*.sh
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:3001
 - Schema Registry: http://localhost:8081
+- Elasticsearch: http://localhost:9200
+- Kibana: http://localhost:5601
 
 ### Development Setup
 
@@ -231,6 +248,13 @@ CREATE MATERIALIZED VIEW trending_hashtags AS ...
 - `DELETE /api/follows/:userId` - Unfollow user
 - `GET /api/follows/:userId/followers` - Get followers
 - `GET /api/follows/:userId/following` - Get following
+
+### Search (Elasticsearch)
+- `GET /api/search/tweets?q=query` - Search tweets
+- `GET /api/search/users?q=query` - Search users
+- `GET /api/search/trending` - Get trending hashtags
+- `POST /api/search/reindex` - Reindex all tweets
+- `POST /api/search/reindex-users` - Reindex all users
 
 ## 🔄 Event Flow
 
@@ -332,6 +356,34 @@ Services expose health endpoints:
 - Kafka: JMX metrics
 - PostgreSQL: pg_stat views
 - Redis: INFO command
+- Elasticsearch: `GET http://localhost:9200/_cluster/health`
+- Kibana: `http://localhost:5601`
+
+### Kibana Dashboard
+
+Access Kibana at http://localhost:5601 for:
+- **Discover**: Explore indexed tweets and users
+- **Dev Tools**: Run Elasticsearch queries
+- **Index Management**: View index health and stats
+
+### Elasticsearch Indices
+- `tweets` - All tweets with full-text search
+- `users` - User profiles for search
+
+### Useful Elasticsearch Queries
+```bash
+# Check cluster health
+curl http://localhost:9200/_cluster/health?pretty
+
+# View all indices
+curl http://localhost:9200/_cat/indices?v
+
+# Search tweets
+curl "http://localhost:9200/tweets/_search?q=hello&pretty"
+
+# Search users
+curl "http://localhost:9200/users/_search?q=john&pretty"
+```
 
 ## 🛠️ Troubleshooting
 
@@ -385,6 +437,8 @@ For production deployment:
 - ✅ Caching for performance
 - ✅ Schema evolution with Avro
 - ✅ Materialized views for analytics
+- ✅ Full-text search with Elasticsearch
+- ✅ Real-time indexing via Kafka consumers
 
 ### Distributed Systems
 - ✅ Stateless services

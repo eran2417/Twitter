@@ -1,3 +1,30 @@
+/*
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     POST TWEET - FULL JOURNEY                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. Browser sends: POST /api/tweets { "content": "Hello World!" }       │
+│     │                                                                   │
+│  2. │──► helmet() ──► cors() ──► compression() ──► json()              │
+│     │    (security)  (allow)   (compress)       (parse body)           │
+│     │                                                                   │
+│  3. │──► morgan() ──► rateLimiter() ──► auth middleware                │
+│     │    (log)       (100 req/15min)   (verify JWT token)              │
+│     │                                                                   │
+│  4. │──► Route: POST /api/tweets                                        │
+│     │    │                                                              │
+│     │    ├──► Check Redis cache (maybe invalidate old data)            │
+│     │    ├──► Insert into PostgreSQL (partitioned table)               │
+│     │    ├──► Update tweet_count via trigger                           │
+│     │    ├──► Send Kafka event: { type: 'tweet.created', ... }         │
+│     │    ├──► Kafka consumer indexes to Elasticsearch                  │
+│     │    └──► WebSocket: io.emit('new-tweet', tweetData)               │
+│     │                                                                   │
+│  5. │──► Response: 201 Created { id: 123, content: "Hello World!" }    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+*/
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -12,6 +39,8 @@ const { rateLimiter } = require('./middleware/rateLimiter');
 const db = require('./database/pool');
 const redisClient = require('./services/redis');
 const kafkaProducer = require('./services/kafka/producer');
+const elasticsearch = require('./services/elasticsearch/client');
+const searchConsumer = require('./services/kafka/searchConsumer');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -19,6 +48,7 @@ const userRoutes = require('./routes/users');
 const tweetRoutes = require('./routes/tweets');
 const timelineRoutes = require('./routes/timeline');
 const followRoutes = require('./routes/follows');
+const searchRoutes = require('./routes/search');
 
 const app = express();
 const httpServer = createServer(app);
@@ -28,6 +58,28 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST']
   }
 });
+
+/*
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        MIDDLEWARE PIPELINE                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Request  ──►  helmet  ──►  cors  ──►  compression  ──►  json parser   │
+│     │            │           │             │                 │          │
+│     │       Add security  Allow     Compress         Parse JSON         │
+│     │        headers     cross-     responses        request body       │
+│     │                    origin                                         │
+│     │                                                                   │
+│     └──►  urlencoded  ──►  morgan  ──►  rateLimiter  ──►  Route Handler │
+│               │              │              │                  │        │
+│          Parse form      Log the       Limit requests     Handle API    │
+│            data          request       (100/15min)          call        │
+│                                                                         │
+│                                                                 ◄───────┤
+│  Response  ◄─────────────────────────────────────────────────────       │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+*/
 
 // Middleware
 app.use(helmet());
@@ -58,7 +110,8 @@ app.get('/health', async (req, res) => {
       services: {
         database: 'connected',
         redis: 'connected',
-        kafka: kafkaProducer.isConnected() ? 'connected' : 'disconnected'
+        kafka: kafkaProducer.isConnected() ? 'connected' : 'disconnected',
+        elasticsearch: elasticsearch.isConnected() ? 'connected' : 'disconnected'
       }
     });
   } catch (error) {
@@ -76,6 +129,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/tweets', tweetRoutes);
 app.use('/api/timeline', timelineRoutes);
 app.use('/api/follows', followRoutes);
+app.use('/api/search', searchRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -84,6 +138,34 @@ app.use((req, res) => {
 
 // Error handling middleware
 app.use(errorHandler);
+
+/*
+┌─────────────┐         WebSocket         ┌─────────────┐
+│  Frontend   │ ────────────────────────► │   Backend   │
+│ (Browser)   │                          │ (server.js) │
+└─────┬───────┘                          └─────┬───────┘
+      │                                         │
+      │ socket.emit('join-timeline', userId)     │
+      │─────────────────────────────────────────►│
+      │                                         │
+      │                                         │
+      │                             socket.join('timeline-userId')
+      │                                         │
+      │                                         ▼
+      │                           ┌─────────────────────────────┐
+      │                           │  Room: timeline-userId      │
+      │                           └─────────────────────────────┘
+      │                                         │
+      │                                         │
+      │        io.to('timeline-userId').emit('new-tweet', data)
+      │◄─────────────────────────────────────────│
+      │                                         │
+      ▼                                         ▼
+┌─────────────┐                          ┌─────────────┐
+│  Frontend   │◄──────────────────────── │   Backend   │
+│ (Browser)   │      Receives update     │ (server.js) │
+└─────────────┘                          └─────────────┘
+*/
 
 // WebSocket for real-time updates
 io.on('connection', (socket) => {
@@ -153,6 +235,18 @@ const startServer = async () => {
     // Test Redis connection
     await redisClient.ping();
     logger.info('Redis connected');
+    
+    // Initialize Elasticsearch
+    try {
+      await elasticsearch.connect();
+      logger.info('Elasticsearch connected');
+      
+      // Start Kafka consumer for search indexing
+      await searchConsumer.start();
+      logger.info('Search consumer started');
+    } catch (esError) {
+      logger.warn('Elasticsearch not available, search features disabled:', esError.message);
+    }
     
     httpServer.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
