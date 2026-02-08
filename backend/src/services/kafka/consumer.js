@@ -7,12 +7,24 @@ const kafka = new Kafka({
   clientId: process.env.KAFKA_CLIENT_ID || 'twitter-backend',
   brokers: (process.env.KAFKA_BROKERS || 'localhost:29092').split(','),
   logLevel: logLevel.ERROR,
+  // Retry configuration for automatic reconnection
+  retry: {
+    initialRetryTime: 300,
+    retries: Number.MAX_SAFE_INTEGER, // Keep retrying indefinitely
+    maxRetryTime: 30000, // Max 30 seconds between retries
+    factor: 2, // Exponential backoff factor
+  },
 });
 
 const consumer = kafka.consumer({
   groupId: 'twitter-consumer-group',
   sessionTimeout: 30000,
   heartbeatInterval: 3000,
+  // Automatic retry on rebalance
+  rebalanceTimeout: 60000,
+  retry: {
+    retries: Number.MAX_SAFE_INTEGER,
+  },
 });
 
 // Event handlers for different topics

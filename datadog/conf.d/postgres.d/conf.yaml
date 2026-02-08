@@ -1,0 +1,83 @@
+## Datadog PostgreSQL Integration Configuration
+## Monitors both primary and replica databases
+
+init_config:
+
+instances:
+  # PostgreSQL Primary (Write Database)
+  - host: postgres-primary
+    port: 5432
+    username: datadog
+    password: datadog_password
+    dbname: twitter
+    
+    # Reported hostname for APM-DBM correlation
+    # This MUST match the hostname used in your application's database connection
+    reported_hostname: postgres-primary
+    
+    # Enable Database Monitoring
+    dbm: true
+    
+    # Collect query metrics from pg_stat_statements
+    collect_activity_metrics: true
+    collect_database_size_metrics: true
+    collect_wal_metrics: true
+    
+    # Query samples for slow query analysis
+    query_samples:
+      enabled: true
+    
+    # Query metrics
+    query_metrics:
+      enabled: true
+    
+    # Relations to collect stats for (tables/indexes)
+    relations:
+      - relation_regex: '.*'
+        schemas:
+          - public
+    
+    # Custom tags - service must match APM pg service
+    tags:
+      - env:development
+      - service:twitter-postgres
+      - role:primary
+      - app:twitter-clone
+
+  # PostgreSQL Replica (Read Database)
+  - host: postgres-replica
+    port: 5432
+    username: datadog
+    password: datadog_password
+    dbname: twitter
+    
+    # Reported hostname for APM-DBM correlation
+    reported_hostname: postgres-replica
+    
+    # Enable Database Monitoring
+    dbm: true
+    
+    # Collect metrics
+    collect_activity_metrics: true
+    collect_database_size_metrics: true
+    
+    # Query samples
+    query_samples:
+      enabled: true
+    
+    # Query metrics
+    query_metrics:
+      enabled: true
+    
+    # Relations to collect stats for
+    relations:
+      - relation_regex: '.*'
+        schemas:
+          - public
+    
+    # Custom tags - service must match APM pg service
+    tags:
+      - env:development
+      - service:twitter-postgres
+      - role:replica
+      - app:twitter-clone

@@ -1,6 +1,43 @@
-version: '3.8'
-
 services:
+  # Datadog Agent - Monitoring, APM, Logs
+  datadog-agent:
+    image: gcr.io/datadoghq/agent:7
+    container_name: twitter-datadog-agent
+    environment:
+      # IMPORTANT: Set your Datadog API key here or via .env file
+      DD_API_KEY: ${DD_API_KEY:-your_datadog_api_key_here}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_HOSTNAME: twitter-cluster
+      # APM Configuration
+      DD_APM_ENABLED: true
+      DD_APM_NON_LOCAL_TRAFFIC: true
+      # Log Collection
+      DD_LOGS_ENABLED: true
+      DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: true
+      # Process Monitoring
+      DD_PROCESS_AGENT_ENABLED: true
+      # Container Monitoring
+      DD_CONTAINER_EXCLUDE: "name:datadog-agent"
+      # Additional tags
+      DD_TAGS: "env:development app:twitter-clone"
+      # Dogstatsd for custom metrics
+      DD_DOGSTATSD_NON_LOCAL_TRAFFIC: true
+    ports:
+      - "8126:8126"  # APM traces
+      - "8125:8125/udp"  # DogStatsD metrics
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./datadog/conf.d/postgres.d/conf.yaml:/etc/datadog-agent/conf.d/postgres.d/conf.yaml:ro
+    networks:
+      - twitter-network
+    depends_on:
+      - postgres-primary
+      - postgres-replica
+    restart: unless-stopped
+
   # PostgreSQL Primary (Master) - Write Database
   postgres-primary:
     image: postgres:15-alpine
@@ -15,6 +52,7 @@ services:
       - postgres-primary-data:/var/lib/postgresql/data
       - ./database/init-primary.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./database/partitioning.sql:/docker-entrypoint-initdb.d/02-partitioning.sql
+      - ./database/datadog-setup.sql:/docker-entrypoint-initdb.d/03-datadog.sql
       - ./database/postgresql-primary.conf:/etc/postgresql/postgresql.conf
       - ./database/pg_hba_primary.conf:/etc/postgresql/pg_hba.conf
     command: >
@@ -212,6 +250,17 @@ services:
       JWT_EXPIRE: 7d
       # CORS
       FRONTEND_URL: http://localhost:3000
+      # Datadog APM Configuration
+      DD_SERVICE: twitter-backend
+      DD_ENV: development
+      DD_VERSION: "1.0.0"
+      DD_AGENT_HOST: datadog-agent
+      DD_TRACE_AGENT_PORT: 8126
+      DD_DOGSTATSD_PORT: 8125
+      DD_LOGS_INJECTION: "true"
+      DD_TRACE_ENABLED: "true"
+      DD_PROFILING_ENABLED: "true"
+      DD_RUNTIME_METRICS_ENABLED: "true"
     depends_on:
       postgres-primary:
         condition: service_healthy
@@ -223,6 +272,8 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "nodejs", "service": "twitter-backend"}]'
     networks:
       - twitter-network
     volumes:

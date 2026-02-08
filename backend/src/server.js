@@ -22,8 +22,14 @@
 │     │                                                                   │
 │  5. │──► Response: 201 Created { id: 123, content: "Hello World!" }    │
 │                                                                         │
+│  6. │──► Datadog: APM traces, metrics, and logs collected              │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 */
+
+// IMPORTANT: Tracer must be initialized BEFORE any other imports
+// This ensures all libraries are properly instrumented
+const { tracer, incrementCounter } = require('./utils/tracer');
 
 const express = require('express');
 const cors = require('cors');
@@ -50,6 +56,9 @@ const timelineRoutes = require('./routes/timeline');
 const followRoutes = require('./routes/follows');
 const searchRoutes = require('./routes/search');
 
+// Import Datadog metrics middleware
+const { requestMetrics, metrics } = require('./middleware/datadogMetrics');
+
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -58,6 +67,9 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST']
   }
 });
+
+// Make metrics available to routes
+app.set('ddMetrics', metrics);
 
 /*
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -75,6 +87,9 @@ const io = new Server(httpServer, {
 │          Parse form      Log the       Limit requests     Handle API    │
 │            data          request       (100/15min)          call        │
 │                                                                         │
+│                    ──►  Datadog Metrics  ──►                            │
+│                          Track request                                  │
+│                          timing & errors                                │
 │                                                                 ◄───────┤
 │  Response  ◄─────────────────────────────────────────────────────       │
 │                                                                         │
@@ -91,6 +106,9 @@ app.use(compression());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
+
+// Datadog request metrics
+app.use(requestMetrics);
 
 // Rate limiting
 app.use('/api/', rateLimiter);
