@@ -17,7 +17,8 @@ router.post('/register',
       .withMessage('Username must be 3-15 characters, alphanumeric and underscores only'),
     body('email').isEmail().normalizeEmail(),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-    body('displayName').isLength({ min: 1, max: 50 })
+    body('displayName').isLength({ min: 1, max: 50 }),
+    body('location').optional().isLength({ max: 100 }).withMessage('Location must be less than 100 characters')
   ],
   async (req, res, next) => {
     try {
@@ -26,7 +27,23 @@ router.post('/register',
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { username, email, password, displayName } = req.body;
+      const { username, email, password, displayName, location } = req.body;
+
+      // Check for existing username and email globally (across all partitions)
+      const existingUser = await db.query(
+        'SELECT username, email FROM users WHERE username = $1 OR email = $2',
+        [username, email]
+      );
+
+      if (existingUser.rows.length > 0) {
+        const existing = existingUser.rows[0];
+        if (existing.username === username) {
+          return res.status(409).json({ error: 'Username already exists' });
+        }
+        if (existing.email === email) {
+          return res.status(409).json({ error: 'Email already exists' });
+        }
+      }
 
       // Hash password
       const passwordHash = await bcrypt.hash(password, 12);
@@ -34,11 +51,11 @@ router.post('/register',
       // Insert user with transaction
       const result = await db.transaction(async (client) => {
         const userResult = await client.query(
-          `INSERT INTO users (username, email, password_hash, display_name)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id, username, email, display_name, avatar_url, verified, 
+          `INSERT INTO users (username, email, password_hash, display_name, location)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, username, email, display_name, location, avatar_url, verified, 
                      follower_count, following_count, tweet_count, created_at`,
-          [username, email, passwordHash, displayName]
+          [username, email, passwordHash, displayName, location]
         );
 
         const user = userResult.rows[0];
@@ -50,6 +67,7 @@ router.post('/register',
             username: user.username,
             email: user.email,
             display_name: user.display_name,
+            location: user.location,
             created_at: user.created_at
           });
         } catch (kafkaError) {
@@ -75,11 +93,8 @@ router.post('/register',
         user: result
       });
     } catch (error) {
-      if (error.code === '23505') {
-        return res.status(409).json({ 
-          error: 'Username or email already exists' 
-        });
-      }
+      // Since we removed database unique constraints, we handle uniqueness at application level
+      // Other database errors are still possible (foreign key violations, etc.)
       next(error);
     }
   }
@@ -139,6 +154,11 @@ router.post('/login',
         user
       });
     } catch (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ 
+          error: 'Username or email already exists' 
+        });
+      }
       next(error);
     }
   }

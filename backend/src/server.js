@@ -242,9 +242,13 @@ const PORT = process.env.PORT || 3001;
 
 const startServer = async () => {
   try {
-    // Initialize Kafka producer
-    await kafkaProducer.connect();
-    logger.info('Kafka producer connected');
+    // Initialize Kafka producer (optional)
+    try {
+      await kafkaProducer.connect();
+      logger.info('Kafka producer connected');
+    } catch (kafkaError) {
+      logger.warn('Kafka not available, event publishing disabled:', kafkaError.message);
+    }
     
     // Test database connection
     await db.primary.query('SELECT NOW()');
@@ -259,9 +263,13 @@ const startServer = async () => {
       await elasticsearch.connect();
       logger.info('Elasticsearch connected');
       
-      // Start Kafka consumer for search indexing
-      await searchConsumer.start();
-      logger.info('Search consumer started');
+      // Start Kafka consumer for search indexing (only if Kafka is available)
+      try {
+        await searchConsumer.start();
+        logger.info('Search consumer started');
+      } catch (consumerError) {
+        logger.warn('Kafka consumer not available:', consumerError.message);
+      }
     } catch (esError) {
       logger.warn('Elasticsearch not available, search features disabled:', esError.message);
     }

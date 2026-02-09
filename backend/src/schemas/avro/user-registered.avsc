@@ -35,6 +35,12 @@
       "doc": "User's display name"
     },
     {
+      "name": "location",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "User's location (optional)"
+    },
+    {
       "name": "createdAt",
       "type": "string",
       "doc": "Registration timestamp"

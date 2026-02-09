@@ -1,3 +1,81 @@
+-- Partitioning Strategy for Users and Tweets Tables
+-- Users: List Partitioning by location first letter groups (13 partitions for location-based data distribution)
+-- Tweets: Range Partitioning by created_at
+
+-- First, partition the users table
+ALTER TABLE users RENAME TO users_old;
+
+-- Create function for location-based partitioning
+CREATE OR REPLACE FUNCTION get_location_partition_key(loc VARCHAR(100))
+RETURNS TEXT AS $$
+BEGIN
+    RETURN CASE 
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('A','B') THEN 'AB'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('C','D') THEN 'CD'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('E','F') THEN 'EF'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('G','H') THEN 'GH'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('I','J') THEN 'IJ'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('K','L') THEN 'KL'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('M','N') THEN 'MN'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('O','P') THEN 'OP'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('Q','R') THEN 'QR'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('S','T') THEN 'ST'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('U','V') THEN 'UV'
+        WHEN upper(substring(coalesce(loc, ''), 1, 1)) IN ('W','X') THEN 'WX'
+        ELSE 'YZ'
+    END;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Create partitioned users table
+CREATE TABLE users (
+    id BIGSERIAL,
+    username VARCHAR(15) NOT NULL,
+    email VARCHAR(254) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    display_name VARCHAR(50) NOT NULL,
+    bio TEXT,
+    avatar_url TEXT,
+    location VARCHAR(100),
+    verified BOOLEAN DEFAULT FALSE,
+    follower_count INTEGER DEFAULT 0,
+    following_count INTEGER DEFAULT 0,
+    tweet_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+) PARTITION BY LIST (get_location_partition_key(location));
+
+-- Create partitions for location first letter groups (13 partitions)
+CREATE TABLE users_ab PARTITION OF users FOR VALUES IN ('AB');
+CREATE TABLE users_cd PARTITION OF users FOR VALUES IN ('CD');
+CREATE TABLE users_ef PARTITION OF users FOR VALUES IN ('EF');
+CREATE TABLE users_gh PARTITION OF users FOR VALUES IN ('GH');
+CREATE TABLE users_ij PARTITION OF users FOR VALUES IN ('IJ');
+CREATE TABLE users_kl PARTITION OF users FOR VALUES IN ('KL');
+CREATE TABLE users_mn PARTITION OF users FOR VALUES IN ('MN');
+CREATE TABLE users_op PARTITION OF users FOR VALUES IN ('OP');
+CREATE TABLE users_qr PARTITION OF users FOR VALUES IN ('QR');
+CREATE TABLE users_st PARTITION OF users FOR VALUES IN ('ST');
+CREATE TABLE users_uv PARTITION OF users FOR VALUES IN ('UV');
+CREATE TABLE users_wx PARTITION OF users FOR VALUES IN ('WX');
+CREATE TABLE users_yz PARTITION OF users FOR VALUES IN ('YZ', '');
+
+-- Create indexes on partitioned table
+CREATE INDEX idx_users_username ON users (username);
+CREATE INDEX idx_users_email ON users (email);
+CREATE INDEX idx_users_location ON users (location);
+CREATE INDEX idx_users_created_at ON users (created_at);
+
+-- Migrate data from old users table
+INSERT INTO users SELECT * FROM users_old;
+
+-- Drop old users table
+DROP TABLE IF EXISTS users_old CASCADE;
+
+-- Update triggers for partitioned users table
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Partitioning Strategy for Tweets Table (Range Partitioning by created_at)
 -- This implements partitioning from "Designing Data-Intensive Applications"
 
@@ -75,10 +153,6 @@ INSERT INTO tweets SELECT * FROM tweets_old WHERE EXISTS (SELECT 1 FROM tweets_o
 -- Drop old table with cascade to remove dependent objects
 DROP TABLE IF EXISTS tweets_old CASCADE;
 
--- Add foreign key constraints (after partitioning setup)
-ALTER TABLE tweets ADD CONSTRAINT fk_tweets_user 
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
-
 -- Note: Self-referencing foreign keys on partitioned tables require special handling
 -- We'll handle reply_to_tweet_id validation in application layer
 
@@ -90,9 +164,10 @@ CREATE TRIGGER tweet_count_trigger
 AFTER INSERT OR DELETE ON tweets
 FOR EACH ROW EXECUTE FUNCTION update_tweet_count();
 
--- Note: Users table partitioning is DISABLED because PostgreSQL requires unique
--- constraints (username, email) to include the partition key, which would break uniqueness
--- Tweets partitioning alone provides sufficient horizontal scalability
+-- Note: Users table is now partitioned by LIST(location first letter groups) with 13 partitions
+-- Global uniqueness of username and email is enforced at application level
+-- This provides location-based data distribution while maintaining global constraints
+-- Tweets partitioning provides additional horizontal scalability
 
 -- Note: Foreign keys for likes and retweets already exist from init-primary.sql
 -- They were automatically dropped when tweets_old was dropped with CASCADE

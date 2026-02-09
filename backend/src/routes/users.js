@@ -14,7 +14,7 @@ router.get('/:username', optionalAuth, async (req, res, next) => {
     
     // Query from replica
     const result = await db.query(
-      `SELECT id, username, email, display_name, bio, avatar_url, verified,
+      `SELECT id, username, email, display_name, bio, avatar_url, location, verified,
               follower_count, following_count, tweet_count, created_at
        FROM users 
        WHERE username = $1`,
@@ -51,7 +51,8 @@ router.patch('/me', authenticate,
   [
     body('displayName').optional().isLength({ min: 1, max: 50 }),
     body('bio').optional().isLength({ max: 160 }),
-    body('avatarUrl').optional().isURL()
+    body('avatarUrl').optional().isURL(),
+    body('location').optional().isLength({ max: 100 })
   ],
   async (req, res, next) => {
     try {
@@ -60,7 +61,7 @@ router.patch('/me', authenticate,
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { displayName, bio, avatarUrl } = req.body;
+      const { displayName, bio, avatarUrl, location } = req.body;
       const updates = [];
       const values = [];
       let paramCount = 1;
@@ -77,6 +78,10 @@ router.patch('/me', authenticate,
         updates.push(`avatar_url = $${paramCount++}`);
         values.push(avatarUrl);
       }
+      if (location !== undefined) {
+        updates.push(`location = $${paramCount++}`);
+        values.push(location);
+      }
 
       if (updates.length === 0) {
         return res.status(400).json({ error: 'No updates provided' });
@@ -88,7 +93,7 @@ router.patch('/me', authenticate,
         `UPDATE users 
          SET ${updates.join(', ')}, updated_at = NOW()
          WHERE id = $${paramCount}
-         RETURNING id, username, email, display_name, bio, avatar_url, verified,
+         RETURNING id, username, email, display_name, bio, avatar_url, location, verified,
                    follower_count, following_count, tweet_count, created_at`,
         values,
         { write: true }

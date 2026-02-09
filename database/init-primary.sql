@@ -2,12 +2,13 @@
 
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
-    username VARCHAR(15) UNIQUE NOT NULL,
-    email VARCHAR(254) UNIQUE NOT NULL,
+    username VARCHAR(15) NOT NULL,
+    email VARCHAR(254) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     display_name VARCHAR(50) NOT NULL,
     bio TEXT,
     avatar_url TEXT,
+    location VARCHAR(100),
     verified BOOLEAN DEFAULT FALSE,
     follower_count INTEGER DEFAULT 0,
     following_count INTEGER DEFAULT 0,

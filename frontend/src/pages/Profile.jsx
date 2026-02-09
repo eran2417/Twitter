@@ -97,6 +97,10 @@ export default function Profile() {
           <p className="mt-3">{user.bio}</p>
         )}
 
+        {user?.location && (
+          <p className="mt-2 text-gray-400">📍 {user.location}</p>
+        )}
+
         <div className="flex items-center gap-2 mt-3 text-gray-500">
           <Calendar className="w-4 h-4" />
           <span className="text-sm">

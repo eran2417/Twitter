@@ -23,9 +23,13 @@ let isConnected = false;
 
 const connect = async () => {
   try {
-    // Connect to Schema Registry first
-    await schemaRegistry.connect();
-    logger.info('Schema Registry connected');
+    // Connect to Schema Registry first (optional)
+    try {
+      await schemaRegistry.connect();
+      logger.info('Schema Registry connected');
+    } catch (schemaError) {
+      logger.warn('Schema Registry not available:', schemaError.message);
+    }
     
     await producer.connect();
     isConnected = true;
@@ -90,7 +94,12 @@ const sendEvent = async (topic, messages, transaction = false) => {
 const sendAvroEvent = async (topic, schemaName, data, key) => {
   if (!isConnected) {
     logger.warn('Kafka producer not connected, attempting to connect...');
-    await connect();
+    try {
+      await connect();
+    } catch (connectError) {
+      logger.warn('Kafka not available, skipping event publishing:', connectError.message);
+      return; // Don't throw error, just skip publishing
+    }
   }
 
   try {
@@ -205,6 +214,7 @@ const publishUserRegistered = async (user) => {
     username: user.username,
     email: user.email,
     displayName: user.display_name || user.username,
+    location: user.location || null,
     createdAt: createdAtStr
   };
 

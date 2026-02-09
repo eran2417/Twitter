@@ -81,6 +81,20 @@ export default function Register() {
 
           <div>
             <input
+              {...register('location', {
+                maxLength: { value: 100, message: 'Maximum 100 characters' }
+              })}
+              type="text"
+              placeholder="Location (optional)"
+              className="input-field"
+            />
+            {errors.location && (
+              <p className="text-red-500 text-sm mt-1">{errors.location.message}</p>
+            )}
+          </div>
+
+          <div>
+            <input
               {...register('password', {
                 required: 'Password is required',
                 minLength: { value: 8, message: 'Minimum 8 characters' }
