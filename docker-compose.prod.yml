@@ -1,0 +1,222 @@
+# Production-Safe Docker Compose Configuration
+# Uses named volumes for data persistence and safety
+
+services:
+  # PostgreSQL Primary with persistent named volume
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: twitter-postgres-primary-prod
+    environment:
+      POSTGRES_DB: twitter
+      POSTGRES_USER: twitter_user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5434:5432"
+    volumes:
+      # Named volume for data persistence
+      - postgres_primary_data:/var/lib/postgresql/data
+      # Initialization scripts (optional)
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - twitter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twitter_user -d twitter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Replica with persistent named volume
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: twitter-postgres-replica-prod
+    environment:
+      POSTGRES_DB: twitter
+      POSTGRES_USER: twitter_user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      # Named volume for replica data
+      - postgres_replica_data:/var/lib/postgresql/data
+    networks:
+      - twitter-network
+    restart: unless-stopped
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    command: >
+      bash -c "
+      echo 'Waiting for primary to be ready...'
+      while ! pg_isready -h postgres-primary -U twitter_user; do
+        sleep 2
+      done
+      echo 'Setting up replication...'
+      "
+
+  # Elasticsearch with persistent data
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: twitter-elasticsearch-prod
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - twitter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis with persistent data
+  redis:
+    image: redis:7-alpine
+    container_name: twitter-redis-prod
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - twitter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Kafka with persistent data
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: twitter-kafka-prod
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    networks:
+      - twitter-network
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Zookeeper (required for Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: twitter-zookeeper-prod
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - twitter-network
+    restart: unless-stopped
+
+  # Schema Registry
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: twitter-schema-registry-prod
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+    networks:
+      - twitter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+# Named volumes for data persistence
+volumes:
+  postgres_primary_data:
+    driver: local
+    labels:
+      service: postgres-primary
+      environment: production-safe
+      backup: required
+
+  postgres_replica_data:
+    driver: local
+    labels:
+      service: postgres-replica
+      environment: production-safe
+      backup: required
+
+  elasticsearch_data:
+    driver: local
+    labels:
+      service: elasticsearch
+      environment: production-safe
+      backup: required
+
+  redis_data:
+    driver: local
+    labels:
+      service: redis
+      environment: production-safe
+      backup: optional
+
+  kafka_data:
+    driver: local
+    labels:
+      service: kafka
+      environment: production-safe
+      backup: optional
+
+  zookeeper_data:
+    driver: local
+    labels:
+      service: zookeeper
+      environment: production-safe
+      backup: optional
+
+  zookeeper_logs:
+    driver: local
+    labels:
+      service: zookeeper
+      environment: production-safe
+      backup: optional
+
+# Networks
+networks:
+  twitter-network:
+    driver: bridge
+    labels:
+      project: twitter-clone
+      environment: production-safe
