@@ -46,15 +46,6 @@ app.use(cors({
 // Logging
 app.use(morgan('combined'));
 
-// Cache control middleware to prevent 304 responses
-app.use((req, res, next) => {
-  res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
-  res.set('Pragma', 'no-cache');
-  res.set('Expires', '0');
-  res.removeHeader('ETag');
-  next();
-});
-
 // API Versioning middleware
 app.use('/api/v1', (req, res, next) => {
   req.apiVersion = 'v1';

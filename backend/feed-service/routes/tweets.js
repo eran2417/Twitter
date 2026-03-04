@@ -104,9 +104,11 @@ router.post('/', authenticate,
       // Invalidate timeline caches
       await redisClient.helper.delPattern(`timeline:${req.user.userId}:*`);
 
-      // Notify via WebSocket
+      // Notify via WebSocket if Socket.io is available
       const io = req.app.get('io');
-      io.to(`timeline-${req.user.userId}`).emit('tweet-created', result);
+      if (io) {
+        io.to(`timeline-${req.user.userId}`).emit('tweet-created', result);
+      }
 
       logger.info(`Tweet created by user ${req.user.userId}`);
 

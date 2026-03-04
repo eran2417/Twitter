@@ -47,7 +47,7 @@ const authService = {
   // Validate JWT token and get user info
   validateToken: async (token) => {
     try {
-      const response = await internalClient.post(`${SERVICE_URLS.auth}/auth/verify`, {}, {
+      const response = await internalClient.get(`${SERVICE_URLS.auth}/auth/verify`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       return response.data;

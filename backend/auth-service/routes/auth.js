@@ -147,10 +147,10 @@ router.post('/login',
       logger.info(`User logged in: ${username}`);
 
       res.json({
-        message: 'Login successful',
-        token,
-        user
-      });
+          message: 'Login successful',
+          token,
+          user
+        });
     } catch (error) {
       if (error.code === '23505') {
         return res.status(409).json({ 
