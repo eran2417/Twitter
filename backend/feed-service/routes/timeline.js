@@ -5,11 +5,12 @@ const { authService, userService, searchService, notificationService } = require
 
 const router = express.Router();
 
-// Get user timeline
+// Get user timeline with opaque cursor pagination
 router.get('/', authenticate, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { limit = 50, offset = 0 } = req.query;
+    const { limit = 50, cursor = null } = req.query;
+    const pageLimit = Math.min(parseInt(limit) + 1, 100); // Fetch one extra to check if there's more
 
     // Example: Validate token with auth service (for demonstration)
     // In practice, this would be done in middleware, but showing internal call
@@ -21,7 +22,7 @@ router.get('/', authenticate, async (req, res) => {
     }
 
     // Get timeline for authenticated user (following + own tweets)
-    const query = `
+    let query = `
       SELECT t.*, u.username, u.display_name, u.avatar_url,
              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
@@ -41,22 +42,64 @@ router.get('/', authenticate, async (req, res) => {
         FROM likes
         GROUP BY tweet_id
       ) lk_count ON t.id = lk_count.tweet_id
-      WHERE t.user_id = $1 OR t.user_id IN (
+      WHERE (t.user_id = $1 OR t.user_id IN (
         SELECT following_id FROM follows WHERE follower_id = $1
-      )
-      ORDER BY t.created_at DESC
-      LIMIT $2 OFFSET $3
+      ))
     `;
-    const params = [userId, limit, offset];
+    
+    let params = [userId];
+    
+    // Parse opaque cursor if provided (base64 encoded)
+    let cursorTimestamp = null;
+    let cursorId = null;
+    if (cursor) {
+      try {
+        const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+        const cursorData = JSON.parse(decoded);
+        cursorTimestamp = cursorData.timestamp;
+        cursorId = cursorData.id;
+      } catch (error) {
+        logger.warn('Invalid cursor format:', error);
+        return res.status(400).json({ error: 'Invalid cursor' });
+      }
+    }
+    
+    // Add cursor filtering if provided (keyset pagination)
+    if (cursorTimestamp && cursorId) {
+      query += ` AND (t.created_at, t.id) < ($${params.length + 1}::timestamp with time zone, $${params.length + 2}::integer)`;
+      params.push(cursorTimestamp);
+      params.push(cursorId);
+    }
+    
+    query += ` ORDER BY t.created_at DESC, t.id DESC LIMIT $${params.length + 1}`;
+    params.push(pageLimit);
 
     const result = await db.query(query, params);
 
+    // Check if there are more results
+    const hasMore = result.rows.length > parseInt(limit);
+    const tweets = hasMore ? result.rows.slice(0, parseInt(limit)) : result.rows;
+    
+    // Create opaque cursor (base64 encoded)
+    let nextCursor = null;
+    if (hasMore && tweets.length > 0) {
+      const lastTweet = tweets[tweets.length - 1];
+      const cursorData = JSON.stringify({
+        timestamp: lastTweet.created_at,
+        id: lastTweet.id
+      });
+      nextCursor = Buffer.from(cursorData).toString('base64');
+    }
+
     res.json({
-      tweets: result.rows,
+      data: {
+        tweets: tweets
+      },
       pagination: {
         limit: parseInt(limit),
-        offset: parseInt(offset),
-        hasMore: result.rows.length === parseInt(limit)
+        cursor: cursor || null,
+        nextCursor: nextCursor,
+        hasMore: hasMore
       }
     });
   } catch (error) {
@@ -96,14 +139,15 @@ router.get('/trending/hashtags', async (req, res) => {
   }
 });
 
-// Search tweets by hashtag
+// Search tweets by hashtag with cursor pagination
 router.get('/search/hashtag/:hashtag', authenticate, async (req, res) => {
   try {
     const { hashtag } = req.params;
     const userId = req.user.userId;
-    const { limit = 50, offset = 0 } = req.query;
+    const { limit = 50, cursor = null } = req.query;
+    const pageLimit = Math.min(parseInt(limit) + 1, 100); // Fetch one extra to check if there's more
 
-    const query = `
+    let query = `
       SELECT t.*, u.username, u.display_name, u.avatar_url,
              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
@@ -124,19 +168,61 @@ router.get('/search/hashtag/:hashtag', authenticate, async (req, res) => {
         GROUP BY tweet_id
       ) lk_count ON t.id = lk_count.tweet_id
       WHERE LOWER(t.content) LIKE LOWER($2)
-      ORDER BY t.created_at DESC
-      LIMIT $3 OFFSET $4
     `;
-    const params = [userId, `%#${hashtag}%`, limit, offset];
+    
+    let params = [userId, `%#${hashtag}%`];
+    
+    // Parse opaque cursor if provided (base64 encoded)
+    let cursorTimestamp = null;
+    let cursorId = null;
+    if (cursor) {
+      try {
+        const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+        const cursorData = JSON.parse(decoded);
+        cursorTimestamp = cursorData.timestamp;
+        cursorId = cursorData.id;
+      } catch (error) {
+        logger.warn('Invalid cursor format:', error);
+        return res.status(400).json({ error: 'Invalid cursor' });
+      }
+    }
+    
+    // Add cursor filtering if provided (keyset pagination)
+    if (cursorTimestamp && cursorId) {
+      query += ` AND (t.created_at, t.id) < ($${params.length + 1}::timestamp with time zone, $${params.length + 2}::integer)`;
+      params.push(cursorTimestamp);
+      params.push(cursorId);
+    }
+    
+    query += ` ORDER BY t.created_at DESC, t.id DESC LIMIT $${params.length + 1}`;
+    params.push(pageLimit);
 
     const result = await db.query(query, params);
 
+    // Check if there are more results
+    const hasMore = result.rows.length > parseInt(limit);
+    const tweets = hasMore ? result.rows.slice(0, parseInt(limit)) : result.rows;
+    
+    // Create opaque cursor (base64 encoded)
+    let nextCursor = null;
+    if (hasMore && tweets.length > 0) {
+      const lastTweet = tweets[tweets.length - 1];
+      const cursorData = JSON.stringify({
+        timestamp: lastTweet.created_at,
+        id: lastTweet.id
+      });
+      nextCursor = Buffer.from(cursorData).toString('base64');
+    }
+
     res.json({
-      tweets: result.rows,
+      data: {
+        tweets: tweets
+      },
       pagination: {
         limit: parseInt(limit),
-        offset: parseInt(offset),
-        hasMore: result.rows.length === parseInt(limit)
+        cursor: cursor || null,
+        nextCursor: nextCursor,
+        hasMore: hasMore
       }
     });
   } catch (error) {
@@ -145,12 +231,13 @@ router.get('/search/hashtag/:hashtag', authenticate, async (req, res) => {
   }
 });
 
-// Get tweets by username
+// Get tweets by username with cursor pagination
 router.get('/users/:username/tweets', authenticate, async (req, res) => {
   try {
     const { username } = req.params;
     const userId = req.user.userId;
-    const { limit = 50, offset = 0 } = req.query;
+    const { limit = 50, cursor = null } = req.query;
+    const pageLimit = Math.min(parseInt(limit) + 1, 100); // Fetch one extra to check if there's more
 
     // First get the user ID from username
     const userResult = await db.query(
@@ -165,7 +252,7 @@ router.get('/users/:username/tweets', authenticate, async (req, res) => {
 
     const targetUserId = userResult.rows[0].id;
 
-    const query = `
+    let query = `
       SELECT t.*, u.username, u.display_name, u.avatar_url,
              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
@@ -186,19 +273,61 @@ router.get('/users/:username/tweets', authenticate, async (req, res) => {
         GROUP BY tweet_id
       ) lk_count ON t.id = lk_count.tweet_id
       WHERE t.user_id = $2
-      ORDER BY t.created_at DESC
-      LIMIT $3 OFFSET $4
     `;
-    const params = [userId, targetUserId, limit, offset];
+    
+    let params = [userId, targetUserId];
+    
+    // Parse opaque cursor if provided (base64 encoded)
+    let cursorTimestamp = null;
+    let cursorId = null;
+    if (cursor) {
+      try {
+        const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+        const cursorData = JSON.parse(decoded);
+        cursorTimestamp = cursorData.timestamp;
+        cursorId = cursorData.id;
+      } catch (error) {
+        logger.warn('Invalid cursor format:', error);
+        return res.status(400).json({ error: 'Invalid cursor' });
+      }
+    }
+    
+    // Add cursor filtering if provided (keyset pagination)
+    if (cursorTimestamp && cursorId) {
+      query += ` AND (t.created_at, t.id) < ($${params.length + 1}::timestamp with time zone, $${params.length + 2}::integer)`;
+      params.push(cursorTimestamp);
+      params.push(cursorId);
+    }
+    
+    query += ` ORDER BY t.created_at DESC, t.id DESC LIMIT $${params.length + 1}`;
+    params.push(pageLimit);
 
     const result = await db.query(query, params);
 
+    // Check if there are more results
+    const hasMore = result.rows.length > parseInt(limit);
+    const tweets = hasMore ? result.rows.slice(0, parseInt(limit)) : result.rows;
+    
+    // Create opaque cursor (base64 encoded)
+    let nextCursor = null;
+    if (hasMore && tweets.length > 0) {
+      const lastTweet = tweets[tweets.length - 1];
+      const cursorData = JSON.stringify({
+        timestamp: lastTweet.created_at,
+        id: lastTweet.id
+      });
+      nextCursor = Buffer.from(cursorData).toString('base64');
+    }
+
     res.json({
-      tweets: result.rows,
+      data: {
+        tweets: tweets
+      },
       pagination: {
         limit: parseInt(limit),
-        offset: parseInt(offset),
-        hasMore: result.rows.length === parseInt(limit)
+        cursor: cursor || null,
+        nextCursor: nextCursor,
+        hasMore: hasMore
       }
     });
   } catch (error) {

@@ -59,7 +59,7 @@ export default function TweetCard({ tweet }) {
 
   const handleLike = (e) => {
     e.stopPropagation()
-    if (tweet.isLiked) {
+    if (tweet.liked) {
       unlikeMutation.mutate()
     } else {
       likeMutation.mutate()
@@ -75,7 +75,7 @@ export default function TweetCard({ tweet }) {
 
   const handleRetweet = (e) => {
     e.stopPropagation()
-    if (tweet.isRetweeted) {
+    if (tweet.retweeted) {
       unretweetMutation.mutate()
     } else {
       retweetMutation.mutate()
@@ -135,11 +135,11 @@ export default function TweetCard({ tweet }) {
               <button 
                 onClick={handleRetweet}
                 className={`flex items-center gap-2 transition-colors group ${
-                  tweet.isRetweeted ? 'text-green-500' : 'hover:text-green-500'
+                  tweet.retweeted ? 'text-green-500' : 'hover:text-green-500'
                 }`}
               >
                 <Repeat2 className={`w-5 h-5 group-hover:bg-green-500/10 rounded-full p-1 transition-colors ${
-                  tweet.isRetweeted ? 'text-green-500' : ''
+                  tweet.retweeted ? 'text-green-500' : ''
                 }`} />
                 <span className="text-sm">{tweet.retweet_count || 0}</span>
               </button>
@@ -147,12 +147,12 @@ export default function TweetCard({ tweet }) {
               <button 
                 onClick={handleLike}
                 className={`flex items-center gap-2 transition-colors group ${
-                  tweet.isLiked ? 'text-red-500' : 'hover:text-red-500'
+                  tweet.liked ? 'text-red-500' : 'hover:text-red-500'
                 }`}
               >
                 <Heart 
                   className={`w-5 h-5 group-hover:bg-red-500/10 rounded-full p-1 transition-colors ${
-                    tweet.isLiked ? 'fill-current' : ''
+                    tweet.liked ? 'fill-current' : ''
                   }`}
                 />
                 <span className="text-sm">{tweet.like_count || 0}</span>
