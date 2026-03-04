@@ -1,6 +1,7 @@
 const express = require('express');
 const { db, logger, authenticate } = require('../shared');
 const redisClient = require('../shared/services/redis');
+const { authService, userService, searchService, notificationService } = require('../shared/services/internal');
 
 const router = express.Router();
 
@@ -9,6 +10,15 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { limit = 50, offset = 0 } = req.query;
+
+    // Example: Validate token with auth service (for demonstration)
+    // In practice, this would be done in middleware, but showing internal call
+    try {
+      const tokenValidation = await authService.validateToken(req.headers.authorization?.replace('Bearer ', ''));
+      logger.info(`Token validated for user: ${tokenValidation.user.username}`);
+    } catch (error) {
+      return res.status(401).json({ error: 'Token validation failed' });
+    }
 
     // Get timeline for authenticated user (following + own tweets)
     const query = `

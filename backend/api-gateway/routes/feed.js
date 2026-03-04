@@ -29,6 +29,7 @@ const createTweetsProxy = () =>
     target: 'http://feed-service:3004',
     changeOrigin: true,
     pathRewrite: { '^/api/v1/tweets': '/tweets' },
+    logLevel: 'debug',
     onError: (err, req, res) => {
       console.error('Feed service error:', err.message);
       res.status(503).json({
@@ -38,6 +39,10 @@ const createTweetsProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'feed-service');
+      // Ensure authorization header is forwarded
+      if (req.headers.authorization) {
+        proxyReq.setHeader('Authorization', req.headers.authorization);
+      }
     }
   });
 
@@ -49,6 +54,7 @@ const createTimelineProxy = () =>
     target: 'http://feed-service:3004',
     changeOrigin: true,
     pathRewrite: { '^/api/v1/timeline': '/timeline' },
+    logLevel: 'debug',
     onError: (err, req, res) => {
       console.error('Feed service error:', err.message);
       res.status(503).json({
@@ -58,6 +64,10 @@ const createTimelineProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'feed-service');
+      // Ensure authorization header is forwarded
+      if (req.headers.authorization) {
+        proxyReq.setHeader('Authorization', req.headers.authorization);
+      }
     }
   });
 
@@ -72,6 +82,7 @@ const createUserTweetsProxy = () =>
       const username = req.params.username;
       return path.replace(`/api/v1/users/${username}/tweets`, `/timeline/users/${username}/tweets`);
     },
+    logLevel: 'debug',
     onError: (err, req, res) => {
       console.error('Feed service error:', err.message);
       res.status(503).json({
@@ -81,6 +92,10 @@ const createUserTweetsProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'feed-service');
+      // Ensure authorization header is forwarded
+      if (req.headers.authorization) {
+        proxyReq.setHeader('Authorization', req.headers.authorization);
+      }
     }
   });
 

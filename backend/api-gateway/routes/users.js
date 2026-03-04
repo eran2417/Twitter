@@ -29,6 +29,7 @@ const createUserProxy = () =>
     target: 'http://user-service:3003',
     changeOrigin: true,
     pathRewrite: { '^/api/v1/users': '/users' },
+    logLevel: 'debug',
     onError: (err, req, res) => {
       console.error('User service error:', err.message);
       res.status(503).json({
@@ -38,6 +39,10 @@ const createUserProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'user-service');
+      // Ensure authorization header is forwarded
+      if (req.headers.authorization) {
+        proxyReq.setHeader('Authorization', req.headers.authorization);
+      }
     }
   });
 
@@ -49,6 +54,7 @@ const createFollowsProxy = () =>
     target: 'http://user-service:3003',
     changeOrigin: true,
     pathRewrite: { '^/api/v1/follows': '/follows' },
+    logLevel: 'debug',
     onError: (err, req, res) => {
       console.error('User service error:', err.message);
       res.status(503).json({
@@ -58,6 +64,10 @@ const createFollowsProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'user-service');
+      // Ensure authorization header is forwarded
+      if (req.headers.authorization) {
+        proxyReq.setHeader('Authorization', req.headers.authorization);
+      }
     }
   });
 

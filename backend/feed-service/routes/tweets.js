@@ -2,6 +2,7 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const { db, kafkaProducer, logger, authenticate, optionalAuth } = require('../shared');
 const redisClient = require('../shared/services/redis');
+const { authService, userService, searchService, notificationService } = require('../shared/services/internal');
 
 const router = express.Router();
 
@@ -59,6 +60,45 @@ router.post('/', authenticate,
         await kafkaProducer.publishTweetCreated(result);
       } catch (kafkaError) {
         logger.error('Failed to publish tweet created event:', kafkaError);
+      }
+
+      // Example: Call user service to get full user profile (for enrichment)
+      try {
+        const userProfile = await userService.getUserProfile(req.user.userId);
+        logger.info(`Tweet created by user: ${userProfile.username} (${userProfile.display_name})`);
+      } catch (error) {
+        logger.warn('Failed to fetch user profile from user service:', error.message);
+      }
+
+      // Example: Index tweet in search service
+      try {
+        await searchService.indexTweet({
+          id: result.id,
+          user_id: result.user_id,
+          content: result.content,
+          hashtags: result.hashtags,
+          mentions: result.mentions,
+          created_at: result.created_at,
+          username: result.username,
+          display_name: result.display_name
+        });
+      } catch (error) {
+        logger.warn('Failed to index tweet in search service:', error.message);
+      }
+
+      // Example: Send notification to followers (call notification service)
+      try {
+        // Get followers from user service
+        const followers = await userService.getUserFollowers(req.user.userId);
+        for (const follower of followers) {
+          await notificationService.sendNotification(follower.id, {
+            type: 'new_tweet',
+            message: `${result.username} posted a new tweet`,
+            tweet_id: result.id
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to send notifications:', error.message);
       }
 
       // Invalidate timeline caches
@@ -154,6 +194,32 @@ router.post('/:id/like', authenticate, async (req, res, next) => {
       logger.error('Failed to publish tweet liked event:', kafkaError);
     }
 
+    // Example: Notify tweet author about the like (call notification service)
+    try {
+      // Get tweet author from database
+      const tweetResult = await db.query(
+        'SELECT user_id FROM tweets WHERE id = $1',
+        [id],
+        { write: false }
+      );
+
+      if (tweetResult.rows.length > 0) {
+        const tweetAuthorId = tweetResult.rows[0].user_id;
+
+        // Don't notify if user liked their own tweet
+        if (tweetAuthorId !== req.user.userId) {
+          await notificationService.sendNotification(tweetAuthorId, {
+            type: 'tweet_liked',
+            message: `Your tweet was liked`,
+            tweet_id: id,
+            liked_by_user_id: req.user.userId
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to send like notification:', error.message);
+    }
+
     // Invalidate caches
     await redisClient.helper.del(`tweet:${id}`);
 
@@ -239,6 +305,46 @@ router.post('/:id/retweet', authenticate, async (req, res, next) => {
         [id]
       );
     });
+
+    // Publish to Kafka
+    try {
+      await kafkaProducer.publishTweetRetweeted(id, req.user.userId);
+    } catch (kafkaError) {
+      logger.error('Failed to publish tweet retweeted event:', kafkaError);
+    }
+
+    // Example: Notify tweet author about the retweet (call notification service)
+    try {
+      // Get tweet author from database
+      const tweetResult = await db.query(
+        'SELECT user_id FROM tweets WHERE id = $1',
+        [id],
+        { write: false }
+      );
+
+      if (tweetResult.rows.length > 0) {
+        const tweetAuthorId = tweetResult.rows[0].user_id;
+
+        // Don't notify if user retweeted their own tweet
+        if (tweetAuthorId !== req.user.userId) {
+          await notificationService.sendNotification(tweetAuthorId, {
+            type: 'tweet_retweeted',
+            message: `Your tweet was retweeted`,
+            tweet_id: id,
+            retweeted_by_user_id: req.user.userId
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to send retweet notification:', error.message);
+    }
+
+    // Example: Update search index for retweet count
+    try {
+      await searchService.updateTweetMetrics(id, { retweet_count: '+1' });
+    } catch (error) {
+      logger.warn('Failed to update search index for retweet:', error.message);
+    }
 
     // Invalidate caches
     await redisClient.helper.del(`tweet:${id}`);
