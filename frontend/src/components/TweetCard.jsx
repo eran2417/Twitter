@@ -84,6 +84,13 @@ export default function TweetCard({ tweet }) {
 
   return (
     <div className="card p-4 cursor-pointer">
+      {/* Retweet indicator */}
+      {tweet.is_retweet && (
+        <div className="flex items-center gap-2 text-gray-500 text-sm mb-2 ml-12">
+          <Repeat2 className="w-4 h-4" />
+          <span>{tweet.retweeted_by_display_name || tweet.retweeted_by_username} Retweeted</span>
+        </div>
+      )}
       <Link to={`/tweet/${tweet.id}`}>
         <div className="flex gap-3">
           {/* Avatar */}

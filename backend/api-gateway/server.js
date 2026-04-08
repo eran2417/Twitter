@@ -46,6 +46,15 @@ app.use(cors({
 // Logging
 app.use(morgan('combined'));
 
+// Disable caching for all API responses
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  next();
+});
+
 // API Versioning middleware
 app.use('/api/v1', (req, res, next) => {
   req.apiVersion = 'v1';
@@ -92,22 +101,21 @@ app.get('/api/docs', (req, res) => {
   });
 });
 
-// Rate limiting
-app.use('/api/v1/auth', authLimiter); // Stricter limits for auth
-app.use('/api/v1/search', searchLimiter); // Limits for search
-app.use('/api/v1', apiLimiter); // General API limits
+// Rate limiting (DISABLED)
+// app.use('/api/v1/auth', authLimiter); // Stricter limits for auth
+// app.use('/api/v1/search', searchLimiter); // Limits for search
+// app.use('/api/v1', apiLimiter); // General API limits
 
 // API v1 Routes
 app.use('/api/v1/auth', createAuthProxy());
+// Special route for user tweets (must come BEFORE general /users route)
+app.use('/api/v1/users/:username/tweets', createUserTweetsProxy());
 app.use('/api/v1/users', createUserProxy());
 app.use('/api/v1/follows', createFollowsProxy());
 app.use('/api/v1/tweets', createTweetsProxy());
 app.use('/api/v1/timeline', createTimelineProxy());
 app.use('/api/v1/search', createSearchProxy());
 app.use('/api/v1/notifications', createNotificationsProxy());
-
-// Special route for user tweets (must come after general routes)
-app.use('/api/v1/users/:username/tweets', createUserTweetsProxy());
 
 // 404 handler for API routes
 app.use('/api/*', (req, res) => {

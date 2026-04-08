@@ -123,6 +123,7 @@ router.post('/', authenticate,
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.userId || null;
 
     const cacheKey = `tweet:${id}`;
     const cached = await redisClient.helper.get(cacheKey);
@@ -134,11 +135,17 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     const result = await db.query(
       `SELECT t.id, t.user_id, t.content, t.reply_to_tweet_id, t.media_urls,
               t.hashtags, t.mentions, t.like_count, t.retweet_count, t.reply_count,
-              t.created_at, u.username, u.display_name, u.avatar_url, u.verified
+              t.created_at, t.updated_at, u.username, u.display_name, u.avatar_url, u.verified,
+              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
+              false as is_retweet,
+              NULL::timestamp as retweeted_at
        FROM tweets t
        JOIN users u ON t.user_id = u.id
+       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $2
+       LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $2
        WHERE t.id = $1`,
-      [id],
+      [id, userId],
       { write: false }
     );
 
@@ -147,16 +154,6 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     }
 
     const tweet = result.rows[0];
-
-    // If authenticated, check if user liked this tweet
-    if (req.user) {
-      const likeResult = await db.query(
-        'SELECT 1 FROM likes WHERE user_id = $1 AND tweet_id = $2',
-        [req.user.userId, id],
-        { write: false }
-      );
-      tweet.isLiked = likeResult.rows.length > 0;
-    }
 
     await redisClient.helper.set(cacheKey, tweet, 300);
 

@@ -126,12 +126,12 @@ export default function Profile() {
           <div className="flex items-center justify-center p-8">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
-        ) : tweets?.data?.tweets?.length === 0 ? (
+        ) : tweets?.data?.data?.tweets?.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             <p>No tweets yet</p>
           </div>
         ) : (
-          tweets?.data?.tweets?.map((tweet) => (
+          tweets?.data?.data?.tweets?.map((tweet) => (
             <TweetCard key={tweet.id} tweet={tweet} />
           ))
         )}

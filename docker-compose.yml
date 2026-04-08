@@ -360,6 +360,8 @@ services:
       PORT: 3004
       DB_PRIMARY_HOST: postgres-primary
       DB_PRIMARY_PORT: 5432
+      DB_REPLICA_HOST: postgres-replica
+      DB_REPLICA_PORT: 5432
       DB_NAME: twitter
       DB_USER: twitter_user
       DB_PASSWORD: password
