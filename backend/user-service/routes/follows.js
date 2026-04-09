@@ -10,7 +10,7 @@ router.post('/:userId', authenticate, async (req, res, next) => {
     const { userId } = req.params;
     const followingId = parseInt(userId);
 
-    if (followingId === req.user.userId) {
+    if (followingId === req.user.id) {
       return res.status(400).json({ error: 'Cannot follow yourself' });
     }
 
@@ -18,7 +18,7 @@ router.post('/:userId', authenticate, async (req, res, next) => {
       // Check if already following
       const existing = await client.query(
         'SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2',
-        [req.user.userId, followingId]
+        [req.user.id, followingId]
       );
 
       if (existing.rows.length > 0) {
@@ -38,20 +38,20 @@ router.post('/:userId', authenticate, async (req, res, next) => {
       // Insert follow
       await client.query(
         'INSERT INTO follows (follower_id, following_id) VALUES ($1, $2)',
-        [req.user.userId, followingId]
+        [req.user.id, followingId]
       );
     });
 
     // Publish to Kafka
     try {
-      await kafkaProducer.publishUserFollowed(req.user.userId, followingId);
+      await kafkaProducer.publishUserFollowed(req.user.id, followingId);
     } catch (kafkaError) {
       logger.error('Failed to publish user followed event:', kafkaError);
     }
 
     // Invalidate caches
     await redisClient.helper.delPattern(`user:${req.user.username}`);
-    await redisClient.helper.delPattern(`timeline:${req.user.userId}:*`);
+    await redisClient.helper.delPattern(`timeline:${req.user.id}:*`);
 
     res.json({ message: 'User followed successfully' });
   } catch (error) {
@@ -67,7 +67,7 @@ router.delete('/:userId', authenticate, async (req, res, next) => {
 
     const result = await db.query(
       'DELETE FROM follows WHERE follower_id = $1 AND following_id = $2 RETURNING id',
-      [req.user.userId, followingId],
+      [req.user.id, followingId],
       { write: true }
     );
 
@@ -77,7 +77,7 @@ router.delete('/:userId', authenticate, async (req, res, next) => {
 
     // Invalidate caches
     await redisClient.helper.delPattern(`user:${req.user.username}`);
-    await redisClient.helper.delPattern(`timeline:${req.user.userId}:*`);
+    await redisClient.helper.delPattern(`timeline:${req.user.id}:*`);
 
     res.json({ message: 'User unfollowed successfully' });
   } catch (error) {
@@ -106,12 +106,12 @@ router.get('/:userId/followers', authenticate, async (req, res, next) => {
 
     // Add isFollowing status
     const followers = await Promise.all(result.rows.map(async (user) => {
-      if (user.id === req.user.userId) {
+      if (user.id === req.user.id) {
         return { ...user, isFollowing: false };
       }
       const followResult = await db.query(
         'SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2',
-        [req.user.userId, user.id],
+        [req.user.id, user.id],
         { write: false }
       );
       return { ...user, isFollowing: followResult.rows.length > 0 };
@@ -149,12 +149,12 @@ router.get('/:userId/following', authenticate, async (req, res, next) => {
 
     // Add isFollowing status
     const following = await Promise.all(result.rows.map(async (user) => {
-      if (user.id === req.user.userId) {
+      if (user.id === req.user.id) {
         return { ...user, isFollowing: false };
       }
       const followResult = await db.query(
         'SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2',
-        [req.user.userId, user.id],
+        [req.user.id, user.id],
         { write: false }
       );
       return { ...user, isFollowing: followResult.rows.length > 0 };

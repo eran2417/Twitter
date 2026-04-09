@@ -27,10 +27,10 @@ router.get('/:username', authenticate, async (req, res, next) => {
     const user = result.rows[0];
 
     // Check if current user is following this user
-    if (req.user.userId !== user.id) {
+    if (req.user.id !== user.id) {
       const followResult = await db.query(
         'SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2',
-        [req.user.userId, user.id],
+        [req.user.id, user.id],
         { write: false }
       );
       user.isFollowing = followResult.rows.length > 0;
@@ -85,7 +85,7 @@ router.patch('/me', authenticate,
         return res.status(400).json({ error: 'No updates provided' });
       }
 
-      values.push(req.user.userId);
+      values.push(req.user.id);
 
       const result = await db.query(
         `UPDATE users 
@@ -163,13 +163,13 @@ router.get('/search/query', authenticate, async (req, res, next) => {
 
     // Add isFollowing status
     const users = await Promise.all(result.rows.map(async (user) => {
-      if (req.user && user.id === req.user.userId) {
+      if (req.user && user.id === req.user.id) {
         return { ...user, isFollowing: false, isCurrentUser: true };
       }
       if (req.user) {
         const followResult = await db.query(
           'SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2',
-          [req.user.userId, user.id],
+          [req.user.id, user.id],
           { write: false }
         );
         return { ...user, isFollowing: followResult.rows.length > 0 };

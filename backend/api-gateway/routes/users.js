@@ -1,4 +1,5 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const { addUserHeaders } = require('../middleware/jwtAuth');
 
 /**
  * User Service Routes Configuration
@@ -39,10 +40,7 @@ const createUserProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'user-service');
-      // Ensure authorization header is forwarded
-      if (req.headers.authorization) {
-        proxyReq.setHeader('Authorization', req.headers.authorization);
-      }
+      addUserHeaders(proxyReq, req);
     }
   });
 
@@ -64,10 +62,7 @@ const createFollowsProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'user-service');
-      // Ensure authorization header is forwarded
-      if (req.headers.authorization) {
-        proxyReq.setHeader('Authorization', req.headers.authorization);
-      }
+      addUserHeaders(proxyReq, req);
     }
   });
 

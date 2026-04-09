@@ -1,4 +1,5 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const { addUserHeaders } = require('../middleware/jwtAuth');
 
 /**
  * Search Service Routes Configuration
@@ -31,6 +32,7 @@ const createSearchProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'search-service');
+      addUserHeaders(proxyReq, req);
     }
   });
 

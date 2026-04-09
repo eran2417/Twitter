@@ -13,11 +13,8 @@
     "pg": "^8.11.0",
     "winston": "^3.8.0",
     "kafkajs": "^2.2.4",
-    "avsc": "^5.7.6",
     "ioredis": "^5.3.0",
     "jsonwebtoken": "^9.0.0",
-    "express-validator": "^7.0.0",
-    "@kafkajs/confluent-schema-registry": "^3.3.0",
-    "dd-trace": "^4.0.0"
+    "express-validator": "^7.0.0"
   }
 }

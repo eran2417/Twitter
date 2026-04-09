@@ -50,14 +50,7 @@ This application demonstrates production-grade distributed system concepts:
 - Kafka idempotent producers
 - Optimistic concurrency control
 
-#### 7. **Application Monitoring with Datadog**
-- **APM (Application Performance Monitoring)**: Distributed tracing across all services
-- **Log Management**: Centralized logging with trace correlation
-- **Infrastructure Monitoring**: Container and host metrics
-- **Custom Metrics**: Business KPIs and application metrics
-- **Real-time Dashboards**: Performance visualization
-
-#### 8. **Scalability Patterns**
+#### 7. **Scalability Patterns**
 - Horizontal database partitioning
 - Connection pooling (primary + replica pools)
 - Stateless API servers
@@ -73,7 +66,6 @@ This application demonstrates production-grade distributed system concepts:
 - **Confluent Schema Registry**: Avro schema management
 - **Elasticsearch 8.11**: Full-text search engine
 - **Kibana 8.11**: Search analytics & visualization
-- **Datadog APM**: Application performance monitoring
 - **WebSockets (Socket.io)**: Real-time updates
 
 ### Frontend
@@ -89,7 +81,6 @@ This application demonstrates production-grade distributed system concepts:
 - **Confluent Schema Registry**: Avro schema management
 - **Elasticsearch Cluster**: Search infrastructure
 - **Kibana**: Monitoring & visualization UI
-- **Datadog Agent**: Monitoring, tracing, and log collection
 
 ## 📁 Project Structure
 
@@ -132,7 +123,6 @@ twitter/
 - Node.js 18+ (for local development)
 - 8GB+ RAM recommended
 - 20GB+ free disk space
-- Datadog account (free tier available at https://www.datadoghq.com)
 
 ### Quick Start
 
@@ -141,23 +131,12 @@ twitter/
 cd /Users/erachaudhary/workspace/twitter
 ```
 
-2. **Configure Datadog (Optional but recommended)**
-```bash
-# Copy the example environment file
-cp .env.example .env
-
-# Edit .env and add your Datadog API key
-# Get your API key from: https://app.datadoghq.com/organization-settings/api-keys
-DD_API_KEY=your_actual_api_key_here
-```
-
-3. **Start all services**
+2. **Start all services**
 ```bash
 docker-compose up -d
 ```
 
 This will start:
-- Datadog Agent (ports 8126, 8125)
 - PostgreSQL Primary (port 5434)
 - PostgreSQL Replica (port 5433)
 - Redis (port 6379)
@@ -169,13 +148,13 @@ This will start:
 - Backend API (port 3001)
 - Frontend (port 3000)
 
-4. **Initialize Kafka topics**
+3. **Initialize Kafka topics**
 ```bash
 chmod +x scripts/*.sh
 ./scripts/init-kafka-topics.sh
 ```
 
-5. **Setup database replication**
+4. **Setup database replication**
 ```bash
 ./scripts/setup-replication.sh
 ```
@@ -404,51 +383,6 @@ curl "http://localhost:9200/tweets/_search?q=hello&pretty"
 
 # Search users
 curl "http://localhost:9200/users/_search?q=john&pretty"
-```
-
-### Datadog APM & Monitoring
-
-Access Datadog at https://app.datadoghq.com for:
-- **APM → Services**: View twitter-backend service map and traces
-- **APM → Traces**: Distributed traces across PostgreSQL, Redis, Kafka, Elasticsearch
-- **Logs**: Centralized logs with trace correlation
-- **Infrastructure**: Container metrics and health
-- **Dashboards**: Custom metrics and KPIs
-
-#### Custom Metrics Tracked
-| Metric | Description |
-|--------|-------------|
-| `twitter.requests.total` | Total API requests by endpoint |
-| `twitter.request.duration` | Request latency histogram |
-| `twitter.requests.errors` | Error count by status code |
-| `twitter.tweets.created` | New tweets counter |
-| `twitter.users.registered` | New user registrations |
-| `twitter.follows.created` | New follow relationships |
-| `twitter.cache.hits` | Redis cache hit rate |
-| `twitter.kafka.events_sent` | Kafka events published |
-
-#### Useful Datadog Queries
-```
-# Find slow requests (>500ms)
-@http.status_code:200 @duration:>500000000
-
-# Track error rates
-service:twitter-backend status:error
-
-# View traces for specific user
-@usr.id:123
-```
-
-#### Verify Datadog Agent
-```bash
-# Check agent status
-docker exec twitter-datadog-agent agent status
-
-# Check APM connectivity
-docker exec twitter-datadog-agent agent status | grep APM
-
-# View agent logs
-docker logs twitter-datadog-agent
 ```
 
 ## 🛠️ Troubleshooting

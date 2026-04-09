@@ -20,7 +20,7 @@ router.get('/tweets', authenticate, async (req, res) => {
       page: parseInt(page),
       limit: Math.min(parseInt(limit), 50),
       sortBy: sort,
-      userId: req.user.userId
+      userId: req.user.id
     });
     
     // Enrich results with user interaction data
@@ -30,14 +30,14 @@ router.get('/tweets', authenticate, async (req, res) => {
       // Check which tweets the user has liked
       const likesResult = await db.query(
         'SELECT tweet_id FROM likes WHERE user_id = $1 AND tweet_id = ANY($2)',
-        [req.user.userId, tweetIds]
+        [req.user.id, tweetIds]
       );
       const likedTweetIds = new Set(likesResult.rows.map(r => r.tweet_id.toString()));
       
       // Check which tweets the user has retweeted
       const retweetsResult = await db.query(
         'SELECT tweet_id FROM retweets WHERE user_id = $1 AND tweet_id = ANY($2)',
-        [req.user.userId, tweetIds]
+        [req.user.id, tweetIds]
       );
       const retweetedIds = new Set(retweetsResult.rows.map(r => r.tweet_id.toString()));
       
@@ -77,7 +77,7 @@ router.get('/users', authenticate, async (req, res) => {
     if (results.users.length > 0) {
       // Filter out current user from results if authenticated
       if (req.user) {
-        results.users = results.users.filter(u => u.id !== req.user.userId.toString());
+        results.users = results.users.filter(u => u.id !== req.user.id.toString());
       }
       results.total = results.users.length;
       
@@ -86,7 +86,7 @@ router.get('/users', authenticate, async (req, res) => {
       if (userIds.length > 0 && req.user) {
         const followsResult = await db.query(
           'SELECT following_id FROM follows WHERE follower_id = $1 AND following_id = ANY($2)',
-          [req.user.userId, userIds]
+          [req.user.id, userIds]
         );
         const followingIds = new Set(followsResult.rows.map(r => r.following_id.toString()));
         

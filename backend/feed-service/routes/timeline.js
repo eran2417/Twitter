@@ -27,7 +27,8 @@ async function getPullBasedTimeline(userId, limit, cursor) {
              t.like_count,
              t.reply_count,
              false as is_retweet,
-             NULL::timestamp as retweeted_at
+             NULL::timestamp as retweeted_at,
+             NULL::text as retweeted_by_username
       FROM tweets t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
@@ -38,7 +39,7 @@ async function getPullBasedTimeline(userId, limit, cursor) {
 
       UNION ALL
 
-      SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
+      SELECT t.id, t.content, t.user_id, retweets.created_at as created_at, t.updated_at,
              u.username, u.display_name, u.avatar_url,
              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
              true as retweeted,
@@ -46,14 +47,19 @@ async function getPullBasedTimeline(userId, limit, cursor) {
              t.like_count,
              t.reply_count,
              true as is_retweet,
-             retweets.created_at as retweeted_at
+             retweets.created_at as retweeted_at,
+             ru.username as retweeted_by_username
       FROM retweets
       JOIN tweets t ON retweets.tweet_id = t.id
       JOIN users u ON t.user_id = u.id
+      JOIN users ru ON retweets.user_id = ru.id
       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
-      WHERE retweets.user_id = $1 AND NOT EXISTS (
-        SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = t.user_id
-      ) AND t.user_id != $1
+      WHERE (retweets.user_id = $1  -- Your own retweets
+             OR retweets.user_id IN (
+               SELECT following_id FROM follows WHERE follower_id = $1
+             )  -- Retweets from followed users
+      )
+      AND t.user_id != $1
     ) AS timeline
   `;
 
@@ -96,31 +102,57 @@ async function getCachedTimeline(userId, limit, cursor) {
   
   if (!feedData) {
     // If cache miss, fetch from database and cache it
+    // Include both original tweets and retweets from followed users
     const result = await db.query(
-      `SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
-              u.username, u.display_name, u.avatar_url,
-              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
-              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
-              t.retweet_count, t.like_count, t.reply_count,
-              false as is_retweet, NULL::timestamp as retweeted_at
-       FROM tweets t
-       JOIN users u ON t.user_id = u.id
-       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
-       LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $1
-       WHERE t.user_id IN (
-         SELECT following_id FROM follows WHERE follower_id = $1
-       ) OR t.user_id = $1
-       ORDER BY t.created_at DESC
-       LIMIT $2`,
+      `SELECT * FROM (
+        -- Original tweets from user and followed users
+        SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
+               u.username, u.display_name, u.avatar_url,
+               CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+               CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
+               t.retweet_count, t.like_count, t.reply_count,
+               false as is_retweet, NULL::timestamp as retweeted_at,
+               NULL::text as retweeted_by_username
+        FROM tweets t
+        JOIN users u ON t.user_id = u.id
+        LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
+        LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $1
+        WHERE t.user_id IN (
+          SELECT following_id FROM follows WHERE follower_id = $1
+        ) OR t.user_id = $1
+
+        UNION ALL
+
+        -- Retweets from followed users and own retweets (showing original tweet with retweet info)
+        SELECT t.id, t.content, t.user_id, rt.created_at as created_at, t.updated_at,
+               u.username, u.display_name, u.avatar_url,
+               CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+               true as retweeted,
+               t.retweet_count, t.like_count, t.reply_count,
+               true as is_retweet, rt.created_at as retweeted_at,
+               ru.username as retweeted_by_username
+        FROM retweets rt
+        JOIN tweets t ON rt.tweet_id = t.id
+        JOIN users u ON t.user_id = u.id
+        JOIN users ru ON rt.user_id = ru.id
+        LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
+        WHERE (rt.user_id = $1  -- Your own retweets
+               OR rt.user_id IN (
+                 SELECT following_id FROM follows WHERE follower_id = $1
+               )  -- Retweets from followed users
+        )
+        AND t.user_id != $1  -- Don't show retweets of own tweets
+      ) AS timeline
+      ORDER BY created_at DESC
+      LIMIT $2`,
       [userId, FEED_LIMITS.MAX_CACHED_TWEETS]
     );
     
     feedData = result.rows;
     // Cache for configured TTL
-    await redisClient.helper.set(cacheKey, JSON.stringify(feedData), 'EX', CACHE_TTL.FEED);
-  } else {
-    feedData = JSON.parse(feedData);
+    await redisClient.helper.set(cacheKey, feedData, CACHE_TTL.FEED);
   }
+  // feedData is already parsed by redisClient.helper.get
   
   // Apply cursor pagination on cached data
   let startIdx = 0;
@@ -148,7 +180,7 @@ async function getCachedTimeline(userId, limit, cursor) {
 // Get user timeline with hybrid logic (pull-based for hot users, cached for normal users)
 router.get('/', authenticate, async (req, res) => {
   try {
-    const userId = req.user.userId;
+    const userId = req.user.id;
     const { limit = 50, cursor = null } = req.query;
 
     let result;
@@ -243,7 +275,7 @@ router.get('/trending/hashtags', async (req, res) => {
 router.get('/search/hashtag/:hashtag', authenticate, async (req, res) => {
   try {
     const { hashtag } = req.params;
-    const userId = req.user.userId;
+    const userId = req.user.id;
     const { limit = 50, cursor = null } = req.query;
     const pageLimit = Math.min(parseInt(limit) + 1, 100); // Fetch one extra to check if there's more
 
@@ -335,7 +367,7 @@ router.get('/search/hashtag/:hashtag', authenticate, async (req, res) => {
 router.get('/users/:username/tweets', authenticate, async (req, res) => {
   try {
     const { username } = req.params;
-    const userId = req.user.userId;
+    const userId = req.user.id;
     const { limit = 50, cursor = null } = req.query;
     const pageLimit = Math.min(parseInt(limit) + 1, 100); // Fetch one extra to check if there's more
 

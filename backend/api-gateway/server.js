@@ -11,7 +11,8 @@ const { createSearchProxy } = require('./routes/search');
 const { createNotificationsProxy } = require('./routes/notifications');
 
 // Import middleware
-const { apiLimiter, authLimiter, searchLimiter } = require('./middleware/rateLimiter');
+const { authLimiter, tweetLimiter, getRateLimitStatus } = require('./middleware/rateLimiter');
+const { verifyJwt, optionalJwt } = require('./middleware/jwtAuth');
 
 // Import service configuration
 const { checkServiceHealth } = require('./config/services');
@@ -101,21 +102,51 @@ app.get('/api/docs', (req, res) => {
   });
 });
 
-// Rate limiting (DISABLED)
-// app.use('/api/v1/auth', authLimiter); // Stricter limits for auth
-// app.use('/api/v1/search', searchLimiter); // Limits for search
-// app.use('/api/v1', apiLimiter); // General API limits
+// Rate limit status endpoint
+app.get('/api/v1/rate-limit/status', async (req, res) => {
+  const userId = req.user?.id || req.query.userId;
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID required' });
+  }
+  
+  const status = await getRateLimitStatus(userId);
+  if (!status) {
+    return res.status(500).json({ error: 'Could not fetch rate limit status' });
+  }
+  
+  res.json(status);
+});
+
+// Rate limit config endpoint
+app.get('/api/v1/rate-limit/config', (req, res) => {
+  const { CONFIG } = require('./middleware/rateLimiter');
+  res.json({
+    auth: {
+      maxAttempts: CONFIG.auth.maxAttempts,
+      windowMs: CONFIG.auth.windowMs,
+      windowHuman: `${CONFIG.auth.windowMs / 60000} minutes`
+    },
+    tweet: {
+      maxPerWindow: CONFIG.tweet.maxTweets,
+      windowMs: CONFIG.tweet.windowMs,
+      windowHuman: `${CONFIG.tweet.windowMs / 60000} minutes`
+    }
+  });
+});
 
 // API v1 Routes
-app.use('/api/v1/auth', createAuthProxy());
+// Auth routes - rate limited, no JWT verification needed (login/register)
+app.use('/api/v1/auth', authLimiter, createAuthProxy());
+
+// Protected routes - JWT verified at gateway, user info passed via headers
 // Special route for user tweets (must come BEFORE general /users route)
-app.use('/api/v1/users/:username/tweets', createUserTweetsProxy());
-app.use('/api/v1/users', createUserProxy());
-app.use('/api/v1/follows', createFollowsProxy());
-app.use('/api/v1/tweets', createTweetsProxy());
-app.use('/api/v1/timeline', createTimelineProxy());
-app.use('/api/v1/search', createSearchProxy());
-app.use('/api/v1/notifications', createNotificationsProxy());
+app.use('/api/v1/users/:username/tweets', verifyJwt, createUserTweetsProxy());
+app.use('/api/v1/users', verifyJwt, createUserProxy());
+app.use('/api/v1/follows', verifyJwt, createFollowsProxy());
+app.use('/api/v1/tweets', verifyJwt, tweetLimiter, createTweetsProxy()); // Tweet rate limit per user
+app.use('/api/v1/timeline', verifyJwt, createTimelineProxy());
+app.use('/api/v1/search', verifyJwt, createSearchProxy());
+app.use('/api/v1/notifications', verifyJwt, createNotificationsProxy());
 
 // 404 handler for API routes
 app.use('/api/*', (req, res) => {

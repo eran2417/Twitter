@@ -13,8 +13,6 @@
     "winston": "^3.8.0",
     "kafkajs": "^2.2.4",
     "pg": "^8.11.0",
-    "ioredis": "^5.3.2",
-    "@kafkajs/confluent-schema-registry": "^3.3.0",
-    "dd-trace": "^4.0.0"
+    "ioredis": "^5.3.2"
   }
 }

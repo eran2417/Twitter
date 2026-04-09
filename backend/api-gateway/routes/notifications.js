@@ -1,4 +1,5 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const { addUserHeaders } = require('../middleware/jwtAuth');
 
 /**
  * Notification Service Routes Configuration
@@ -31,6 +32,7 @@ const createNotificationsProxy = () =>
     },
     onProxyReq: (proxyReq, req) => {
       proxyReq.setHeader('X-Gateway-Service', 'notification-service');
+      addUserHeaders(proxyReq, req);
     }
   });
 
