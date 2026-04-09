@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
-const { db, logger, authenticate } = require('../shared');
-const redisClient = require('../shared/services/redis');
+const { db, logger, authenticate } = require('../../shared');
+const redisClient = require('../../shared/services/redis');
 
 const router = express.Router();
 

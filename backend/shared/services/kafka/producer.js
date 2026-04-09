@@ -1,6 +1,5 @@
 const { Kafka, logLevel } = require('kafkajs');
 const logger = require('../../utils/logger');
-const schemaRegistry = require('../../schemas/schemaRegistry');
 
 const kafka = new Kafka({
   clientId: process.env.KAFKA_CLIENT_ID || 'twitter-backend',
@@ -14,8 +13,6 @@ const kafka = new Kafka({
 
 const producer = kafka.producer({
   allowAutoTopicCreation: true,
-  transactionalId: 'twitter-producer',
-  maxInFlightRequests: 5,
   idempotent: true
 });
 
@@ -23,14 +20,6 @@ let isConnected = false;
 
 const connect = async () => {
   try {
-    // Connect to Schema Registry first (optional)
-    try {
-      await schemaRegistry.connect();
-      logger.info('Schema Registry connected');
-    } catch (schemaError) {
-      logger.warn('Schema Registry not available:', schemaError.message);
-    }
-    
     await producer.connect();
     isConnected = true;
     logger.info('Kafka producer connected');
@@ -51,68 +40,35 @@ const disconnect = async () => {
   }
 };
 
-const sendEvent = async (topic, messages, transaction = false) => {
-  if (!isConnected) {
-    logger.warn('Kafka producer not connected, attempting to connect...');
-    await connect();
-  }
-  
-  try {
-    if (transaction) {
-      const txn = await producer.transaction();
-      try {
-        await txn.send({
-          topic,
-          messages
-        });
-        await txn.commit();
-      } catch (error) {
-        await txn.abort();
-        throw error;
-      }
-    } else {
-      await producer.send({
-        topic,
-        messages
-      });
-    }
-    
-    logger.info(`Event sent to topic ${topic}:`, { messageCount: messages.length });
-  } catch (error) {
-    logger.error('Kafka send error:', error);
-    throw error;
-  }
-};
-
 /**
- * Send Avro-encoded message via Schema Registry
- * @param {string} topic - Kafka topic
- * @param {string} schemaName - Name of the Avro schema (e.g., 'tweet-created')
- * @param {object} data - Data to encode
- * @param {string|number} key - Message key
+ * Send JSON message to Kafka topic
+ * @param {string} topic - Kafka topic name
+ * @param {object} data - Message data
+ * @param {string|number} key - Message key for partitioning
  */
-const sendAvroEvent = async (topic, schemaName, data, key) => {
+const sendEvent = async (topic, data, key) => {
   if (!isConnected) {
     logger.warn('Kafka producer not connected, attempting to connect...');
     try {
       await connect();
     } catch (connectError) {
       logger.warn('Kafka not available, skipping event publishing:', connectError.message);
-      return; // Don't throw error, just skip publishing
+      return;
     }
   }
 
   try {
-    const message = await schemaRegistry.createKafkaMessage(schemaName, data, key);
-    
     await producer.send({
       topic,
-      messages: [message]
+      messages: [{
+        key: String(key),
+        value: JSON.stringify(data)
+      }]
     });
     
-    logger.info(`Avro event sent to topic ${topic}:`, { schemaName, key });
+    logger.debug(`Event sent to topic ${topic}:`, { key });
   } catch (error) {
-    logger.error(`Avro send error for ${schemaName}:`, error);
+    logger.error(`Send error for topic ${topic}:`, error);
     throw error;
   }
 };
@@ -130,11 +86,10 @@ const Events = {
 };
 
 /**
- * Publish tweet created event with Avro encoding
+ * Publish tweet created event
  */
 const publishTweetCreated = async (tweet) => {
-  // Transform data to match Avro schema
-  const avroData = {
+  const data = {
     eventType: Events.TWEET_CREATED,
     timestamp: new Date().toISOString(),
     tweetId: parseInt(tweet.id),
@@ -147,44 +102,56 @@ const publishTweetCreated = async (tweet) => {
     createdAt: tweet.created_at || new Date().toISOString()
   };
 
-  await sendAvroEvent('tweets', 'tweet-created', avroData, tweet.id);
+  await sendEvent('tweets', data, tweet.id);
 };
 
 /**
- * Publish tweet liked event with Avro encoding
+ * Publish tweet liked event
  */
 const publishTweetLiked = async (tweetId, userId) => {
-  const avroData = {
-    eventType: 'LIKE',
+  const data = {
+    eventType: Events.TWEET_LIKED,
     timestamp: new Date().toISOString(),
     tweetId: parseInt(tweetId),
-    userId: parseInt(userId),
-    metadata: null
+    userId: parseInt(userId)
   };
 
-  await sendAvroEvent('tweet-interactions', 'tweet-interaction', avroData, tweetId);
+  await sendEvent('tweet-interactions', data, tweetId);
 };
 
 /**
- * Publish tweet unliked event with Avro encoding
+ * Publish tweet unliked event
  */
 const publishTweetUnliked = async (tweetId, userId) => {
-  const avroData = {
-    eventType: 'UNLIKE',
+  const data = {
+    eventType: Events.TWEET_UNLIKED,
     timestamp: new Date().toISOString(),
     tweetId: parseInt(tweetId),
-    userId: parseInt(userId),
-    metadata: null
+    userId: parseInt(userId)
   };
 
-  await sendAvroEvent('tweet-interactions', 'tweet-interaction', avroData, tweetId);
+  await sendEvent('tweet-interactions', data, tweetId);
 };
 
 /**
- * Publish user followed event with Avro encoding
+ * Publish tweet retweeted event
+ */
+const publishTweetRetweeted = async (tweetId, userId) => {
+  const data = {
+    eventType: Events.TWEET_RETWEETED,
+    timestamp: new Date().toISOString(),
+    tweetId: parseInt(tweetId),
+    userId: parseInt(userId)
+  };
+
+  await sendEvent('tweet-interactions', data, tweetId);
+};
+
+/**
+ * Publish user followed event
  */
 const publishUserFollowed = async (followerId, followingId) => {
-  const avroData = {
+  const data = {
     eventType: Events.USER_FOLLOWED,
     timestamp: new Date().toISOString(),
     followerId: parseInt(followerId),
@@ -192,14 +159,13 @@ const publishUserFollowed = async (followerId, followingId) => {
     createdAt: new Date().toISOString()
   };
 
-  await sendAvroEvent('user-interactions', 'user-followed', avroData, followerId);
+  await sendEvent('user-interactions', data, followerId);
 };
 
 /**
- * Publish user registered event with Avro encoding
+ * Publish user registered event
  */
 const publishUserRegistered = async (user) => {
-  // Convert Date object to ISO string if needed
   let createdAtStr = user.created_at;
   if (createdAtStr instanceof Date) {
     createdAtStr = createdAtStr.toISOString();
@@ -207,7 +173,7 @@ const publishUserRegistered = async (user) => {
     createdAtStr = new Date().toISOString();
   }
 
-  const avroData = {
+  const data = {
     eventType: Events.USER_REGISTERED,
     timestamp: new Date().toISOString(),
     userId: parseInt(user.id),
@@ -218,31 +184,49 @@ const publishUserRegistered = async (user) => {
     createdAt: createdAtStr
   };
 
-  await sendAvroEvent('user-events', 'user-registered', avroData, user.id);
+  await sendEvent('user-events', data, user.id);
+};
+
+/**
+ * Publish notification event
+ */
+const publishNotification = async (userId, notificationType, notificationData) => {
+  const data = {
+    eventType: 'NOTIFICATION_SENT',
+    timestamp: new Date().toISOString(),
+    userId: parseInt(userId),
+    notificationType: notificationType,
+    message: notificationData.message || '',
+    tweetId: notificationData.tweet_id ? parseInt(notificationData.tweet_id) : null,
+    fromUserId: notificationData.from_user_id ? parseInt(notificationData.from_user_id) : null,
+    metadata: JSON.stringify(notificationData)
+  };
+
+  await sendEvent('notifications', data, userId);
 };
 
 // Helper functions to extract hashtags and mentions from tweet content
 const extractHashtags = (content) => {
   const hashtags = content.match(/#\w+/g) || [];
-  return hashtags.map(tag => tag.substring(1)); // Remove # prefix
+  return hashtags.map(tag => tag.substring(1));
 };
 
 const extractMentions = (content) => {
   const mentions = content.match(/@\w+/g) || [];
-  return mentions.map(mention => mention.substring(1)); // Remove @ prefix
+  return mentions.map(mention => mention.substring(1));
 };
 
 module.exports = {
   connect,
   disconnect,
   sendEvent,
-  sendAvroEvent,
   isConnected: () => isConnected,
   Events,
   publishTweetCreated,
   publishTweetLiked,
   publishTweetUnliked,
+  publishTweetRetweeted,
   publishUserFollowed,
   publishUserRegistered,
-  schemaRegistry
+  publishNotification
 };

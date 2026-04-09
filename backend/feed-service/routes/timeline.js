@@ -1,12 +1,9 @@
 const express = require('express');
-const { db, logger, authenticate } = require('../shared');
-const redisClient = require('../shared/services/redis');
-const { authService, userService, searchService, notificationService } = require('../shared/services/internal');
+const { db, logger, authenticate } = require('../../shared');
+const redisClient = require('../../shared/services/redis');
+const { HOT_USER_THRESHOLD, CACHE_KEYS, CACHE_TTL, FEED_LIMITS, PAGINATION } = require('../constants');
 
 const router = express.Router();
-
-// Threshold for determining "hot users" (celebrity status)
-const HOT_USER_THRESHOLD = 5000;
 
 // Helper function to check if a user is "hot"
 async function isHotUser(userId) {
@@ -61,7 +58,7 @@ async function getPullBasedTimeline(userId, limit, cursor) {
   `;
 
   let params = [userId];
-  const pageLimit = Math.min(parseInt(limit) + 1, 100);
+  const pageLimit = Math.min(parseInt(limit) + 1, PAGINATION.MAX_LIMIT);
   
   // Parse cursor if provided
   let cursorTimestamp = null;
@@ -114,13 +111,13 @@ async function getCachedTimeline(userId, limit, cursor) {
          SELECT following_id FROM follows WHERE follower_id = $1
        ) OR t.user_id = $1
        ORDER BY t.created_at DESC
-       LIMIT 500`,
-      [userId]
+       LIMIT $2`,
+      [userId, FEED_LIMITS.MAX_CACHED_TWEETS]
     );
     
     feedData = result.rows;
-    // Cache for 5 minutes
-    await redisClient.helper.set(cacheKey, JSON.stringify(feedData), 'EX', 300);
+    // Cache for configured TTL
+    await redisClient.helper.set(cacheKey, JSON.stringify(feedData), 'EX', CACHE_TTL.FEED);
   } else {
     feedData = JSON.parse(feedData);
   }
@@ -137,7 +134,7 @@ async function getCachedTimeline(userId, limit, cursor) {
     }
   }
   
-  const pageLimit = Math.min(parseInt(limit), 100);
+  const pageLimit = Math.min(parseInt(limit), PAGINATION.MAX_LIMIT);
   const tweets = feedData.slice(startIdx, startIdx + pageLimit);
   const hasMore = startIdx + pageLimit < feedData.length;
   
@@ -153,14 +150,6 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { limit = 50, cursor = null } = req.query;
-
-    // Example: Validate token with auth service
-    try {
-      const tokenValidation = await authService.validateToken(req.headers.authorization?.replace('Bearer ', ''));
-      logger.info(`Token validated for user: ${tokenValidation.user.username}`);
-    } catch (error) {
-      return res.status(401).json({ error: 'Token validation failed' });
-    }
 
     let result;
     let strategy;
@@ -218,38 +207,6 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-
-    // Check if there are more results
-    const hasMore = result.rows.length > parseInt(limit);
-    const tweets = hasMore ? result.rows.slice(0, parseInt(limit)) : result.rows;
-    
-    // Create opaque cursor (base64 encoded)
-    let nextCursor = null;
-    if (hasMore && tweets.length > 0) {
-      const lastTweet = tweets[tweets.length - 1];
-      const cursorData = JSON.stringify({
-        timestamp: lastTweet.created_at,
-        id: lastTweet.id
-      });
-      nextCursor = Buffer.from(cursorData).toString('base64');
-    }
-
-    res.json({
-      data: {
-        tweets: tweets
-      },
-      pagination: {
-        limit: parseInt(limit),
-        cursor: cursor || null,
-        nextCursor: nextCursor,
-        hasMore: hasMore
-      }
-    });
-  } catch (error) {
-    logger.error('Error fetching timeline:', error);
-    res.status(500).json({ error: 'Failed to fetch timeline' });
-  }
-});
 
 // Get trending hashtags
 router.get('/trending/hashtags', async (req, res) => {

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const elasticsearch = require('../shared/services/elasticsearch/client');
-const { logger, db, authenticate } = require('../shared');
+const elasticsearch = require('../../shared/services/elasticsearch/client');
+const { logger, db, authenticate } = require('../../shared');
 
 /**
  * @route   GET /api/search/tweets

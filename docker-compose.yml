@@ -51,8 +51,7 @@ services:
     volumes:
       - postgres-primary-data:/var/lib/postgresql/data
       - ./database/init-primary.sql:/docker-entrypoint-initdb.d/01-init.sql
-      - ./database/partitioning.sql:/docker-entrypoint-initdb.d/02-partitioning.sql
-      - ./database/datadog-setup.sql:/docker-entrypoint-initdb.d/03-datadog.sql
+      - ./database/datadog-setup.sql:/docker-entrypoint-initdb.d/02-datadog.sql
       - ./database/postgresql-primary.conf:/etc/postgresql/postgresql.conf
       - ./database/pg_hba_primary.conf:/etc/postgresql/pg_hba.conf
     command: >
@@ -284,8 +283,8 @@ services:
   # Microservices
   auth-service:
     build:
-      context: ./backend/auth-service
-      dockerfile: Dockerfile
+      context: ./backend
+      dockerfile: auth-service/Dockerfile
     container_name: twitter-auth-service
     ports:
       - "3002:3002"
@@ -317,8 +316,8 @@ services:
 
   user-service:
     build:
-      context: ./backend/user-service
-      dockerfile: Dockerfile
+      context: ./backend
+      dockerfile: user-service/Dockerfile
     container_name: twitter-user-service
     ports:
       - "3003:3003"
@@ -350,8 +349,8 @@ services:
 
   feed-service:
     build:
-      context: ./backend/feed-service
-      dockerfile: Dockerfile
+      context: ./backend
+      dockerfile: feed-service/Dockerfile
     container_name: twitter-feed-service
     ports:
       - "3004:3004"
@@ -385,8 +384,8 @@ services:
 
   search-service:
     build:
-      context: ./backend/search-service
-      dockerfile: Dockerfile
+      context: ./backend
+      dockerfile: search-service/Dockerfile
     container_name: twitter-search-service
     ports:
       - "3005:3005"
@@ -400,6 +399,7 @@ services:
       DB_NAME: twitter
       DB_USER: twitter_user
       DB_PASSWORD: password
+      KAFKA_BROKERS: kafka:9092
       ELASTICSEARCH_URL: http://elasticsearch:9200
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -409,6 +409,8 @@ services:
     depends_on:
       postgres-primary:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
       elasticsearch:
         condition: service_healthy
     networks:
@@ -417,8 +419,8 @@ services:
 
   notification-service:
     build:
-      context: ./backend/notification-service
-      dockerfile: Dockerfile
+      context: ./backend
+      dockerfile: notification-service/Dockerfile
     container_name: twitter-notification-service
     ports:
       - "3006:3006"
@@ -435,8 +437,8 @@ services:
 
   api-gateway:
     build:
-      context: ./backend/api-gateway
-      dockerfile: Dockerfile
+      context: ./backend
+      dockerfile: api-gateway/Dockerfile
     container_name: twitter-api-gateway
     ports:
       - "3001:3001"

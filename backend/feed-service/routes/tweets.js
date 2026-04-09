@@ -1,8 +1,9 @@
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
-const { db, kafkaProducer, logger, authenticate, optionalAuth } = require('../shared');
-const redisClient = require('../shared/services/redis');
-const { authService, userService, searchService, notificationService } = require('../shared/services/internal');
+const { db, kafkaProducer, logger, authenticate, optionalAuth } = require('../../shared');
+const redisClient = require('../../shared/services/redis');
+const { HOT_USER_THRESHOLD, CACHE_KEYS, CACHE_TTL, FEED_LIMITS, TWEET_CONSTRAINTS } = require('../constants');
+const { publishTweetEvents } = require('../services/tweetEvents');
 
 const router = express.Router();
 
@@ -10,8 +11,8 @@ const router = express.Router();
 router.post('/', authenticate,
   [
     body('content')
-      .isLength({ min: 1, max: 280 })
-      .withMessage('Tweet must be 1-280 characters'),
+      .isLength({ min: TWEET_CONSTRAINTS.MIN_LENGTH, max: TWEET_CONSTRAINTS.MAX_LENGTH })
+      .withMessage(`Tweet must be ${TWEET_CONSTRAINTS.MIN_LENGTH}-${TWEET_CONSTRAINTS.MAX_LENGTH} characters`),
     body('replyToTweetId').optional().isInt(),
     body('mediaUrls').optional().isArray(),
     body('hashtags').optional().isArray(),
@@ -55,54 +56,12 @@ router.post('/', authenticate,
         return { ...tweet, ...userResult.rows[0] };
       });
 
-      // Publish to Kafka
-      try {
-        await kafkaProducer.publishTweetCreated(result);
-      } catch (kafkaError) {
-        logger.error('Failed to publish tweet created event:', kafkaError);
-      }
-
-      // Example: Call user service to get full user profile (for enrichment)
-      try {
-        const userProfile = await userService.getUserProfile(req.user.userId);
-        logger.info(`Tweet created by user: ${userProfile.username} (${userProfile.display_name})`);
-      } catch (error) {
-        logger.warn('Failed to fetch user profile from user service:', error.message);
-      }
-
-      // Example: Index tweet in search service
-      try {
-        await searchService.indexTweet({
-          id: result.id,
-          user_id: result.user_id,
-          content: result.content,
-          hashtags: result.hashtags,
-          mentions: result.mentions,
-          created_at: result.created_at,
-          username: result.username,
-          display_name: result.display_name
-        });
-      } catch (error) {
-        logger.warn('Failed to index tweet in search service:', error.message);
-      }
-
-      // Example: Send notification to followers (call notification service)
-      try {
-        // Get followers from user service
-        const followers = await userService.getUserFollowers(req.user.userId);
-        for (const follower of followers) {
-          await notificationService.sendNotification(follower.id, {
-            type: 'new_tweet',
-            message: `${result.username} posted a new tweet`,
-            tweet_id: result.id
-          });
-        }
-      } catch (error) {
-        logger.warn('Failed to send notifications:', error.message);
-      }
+      // Publish tweet events async (Kafka, notifications) - fire and forget
+      publishTweetEvents(result, req.user.userId).catch(err => 
+        logger.error('Background event publishing failed:', err)
+      );
 
       // Determine feed strategy: Check if user is hot (>5000 followers)
-      const HOT_USER_THRESHOLD = 5000;
       let isHotUser = false;
       try {
         const userResult = await db.query(
@@ -131,8 +90,8 @@ router.post('/', authenticate,
                 // Prepend new tweet to cached feed
                 const feed = JSON.parse(feedData);
                 feed.unshift(result);
-                feed.splice(500); // Keep only 500 most recent
-                await redisClient.helper.set(cacheKey, JSON.stringify(feed), 'EX', 300);
+                feed.splice(FEED_LIMITS.MAX_CACHED_TWEETS); // Keep only max tweets
+                await redisClient.helper.set(cacheKey, JSON.stringify(feed), 'EX', CACHE_TTL.FEED);
               }
             } catch (error) {
               logger.warn(`Failed to fan-out to follower ${follower_id}:`, error.message);
@@ -242,7 +201,7 @@ router.post('/:id/like', authenticate, async (req, res, next) => {
       logger.error('Failed to publish tweet liked event:', kafkaError);
     }
 
-    // Example: Notify tweet author about the like (call notification service)
+    // Notify tweet author about the like via Kafka
     try {
       // Get tweet author from database
       const tweetResult = await db.query(
@@ -256,16 +215,15 @@ router.post('/:id/like', authenticate, async (req, res, next) => {
 
         // Don't notify if user liked their own tweet
         if (tweetAuthorId !== req.user.userId) {
-          await notificationService.sendNotification(tweetAuthorId, {
-            type: 'tweet_liked',
+          await kafkaProducer.publishNotification(tweetAuthorId, 'tweet_liked', {
             message: `Your tweet was liked`,
             tweet_id: id,
-            liked_by_user_id: req.user.userId
+            from_user_id: req.user.userId
           });
         }
       }
     } catch (error) {
-      logger.warn('Failed to send like notification:', error.message);
+      logger.warn('Failed to queue like notification:', error.message);
     }
 
     // Invalidate caches
@@ -375,23 +333,15 @@ router.post('/:id/retweet', authenticate, async (req, res, next) => {
 
         // Don't notify if user retweeted their own tweet
         if (tweetAuthorId !== req.user.userId) {
-          await notificationService.sendNotification(tweetAuthorId, {
-            type: 'tweet_retweeted',
+          await kafkaProducer.publishNotification(tweetAuthorId, 'tweet_retweeted', {
             message: `Your tweet was retweeted`,
             tweet_id: id,
-            retweeted_by_user_id: req.user.userId
+            from_user_id: req.user.userId
           });
         }
       }
     } catch (error) {
-      logger.warn('Failed to send retweet notification:', error.message);
-    }
-
-    // Example: Update search index for retweet count
-    try {
-      await searchService.updateTweetMetrics(id, { retweet_count: '+1' });
-    } catch (error) {
-      logger.warn('Failed to update search index for retweet:', error.message);
+      logger.warn('Failed to queue retweet notification:', error.message);
     }
 
     // Invalidate caches

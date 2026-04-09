@@ -1,6 +1,6 @@
 const express = require('express');
-const { db, kafkaProducer, logger, authenticate } = require('../shared');
-const redisClient = require('../shared/services/redis');
+const { db, kafkaProducer, logger, authenticate } = require('../../shared');
+const redisClient = require('../../shared/services/redis');
 
 const router = express.Router();
 
