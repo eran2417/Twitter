@@ -104,19 +104,12 @@ router.post('/', authenticate,
         logger.info(`Hot user ${req.user.userId} - skipping fan-out, using pull-based for followers`);
       }
 
-      // Invalidate timeline caches for non-hot users
+      // Invalidate creator's timeline cache (they just posted new content)
       await redisClient.helper.delPattern(`timeline:${req.user.userId}:*`);
-      // Invalidate feed caches for all followers
-      await redisClient.helper.delPattern(`feed:*`);
-
-      // WebSocket: Broadcast based on feed strategy
-      const io = req.app.get('io');
-      if (io) {
-        io.to(`timeline-${req.user.userId}`).emit('tweet-created', result);
-        
-        // For hot users, don't broadcast to all followers (use pull-based instead)
-        // For normal users, WebSocket rooms handle follower delivery via 'follow' events in server.js
-      }
+      
+      // For non-hot users: feed caches already updated via fan-out above
+      // For hot users: followers will see tweet on next cache refresh (TTL-based expiration)
+      logger.debug(`Tweet cache strategy: ${isHotUser ? 'TTL-based' : 'fan-out'}`);
 
       logger.info(`Tweet created by user ${req.user.userId}`);
 
