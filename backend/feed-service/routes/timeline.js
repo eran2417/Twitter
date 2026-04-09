@@ -5,15 +5,156 @@ const { authService, userService, searchService, notificationService } = require
 
 const router = express.Router();
 
-// Get user timeline with opaque cursor pagination
+// Threshold for determining "hot users" (celebrity status)
+const HOT_USER_THRESHOLD = 5000;
+
+// Helper function to check if a user is "hot"
+async function isHotUser(userId) {
+  const result = await db.query(
+    'SELECT follower_count FROM users WHERE id = $1',
+    [userId]
+  );
+  if (result.rows.length === 0) return false;
+  return result.rows[0].follower_count >= HOT_USER_THRESHOLD;
+}
+
+// Helper function to fetch timeline using pull-based logic (for hot users)
+async function getPullBasedTimeline(userId, limit, cursor) {
+  let query = `
+    SELECT * FROM (
+      SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
+             u.username, u.display_name, u.avatar_url,
+             CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+             CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
+             t.retweet_count,
+             t.like_count,
+             t.reply_count,
+             false as is_retweet,
+             NULL::timestamp as retweeted_at
+      FROM tweets t
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
+      LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $1
+      WHERE (t.user_id = $1 OR t.user_id IN (
+        SELECT following_id FROM follows WHERE follower_id = $1
+      ))
+
+      UNION ALL
+
+      SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
+             u.username, u.display_name, u.avatar_url,
+             CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+             true as retweeted,
+             t.retweet_count,
+             t.like_count,
+             t.reply_count,
+             true as is_retweet,
+             retweets.created_at as retweeted_at
+      FROM retweets
+      JOIN tweets t ON retweets.tweet_id = t.id
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
+      WHERE retweets.user_id = $1 AND NOT EXISTS (
+        SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = t.user_id
+      ) AND t.user_id != $1
+    ) AS timeline
+  `;
+
+  let params = [userId];
+  const pageLimit = Math.min(parseInt(limit) + 1, 100);
+  
+  // Parse cursor if provided
+  let cursorTimestamp = null;
+  let cursorId = null;
+  if (cursor) {
+    try {
+      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+      const cursorData = JSON.parse(decoded);
+      cursorTimestamp = cursorData.timestamp;
+      cursorId = cursorData.id;
+    } catch (error) {
+      logger.warn('Invalid cursor format:', error);
+      throw new Error('Invalid cursor');
+    }
+  }
+  
+  if (cursorTimestamp && cursorId) {
+    query += ` WHERE (timeline.created_at, timeline.id) < ($${params.length + 1}::timestamp with time zone, $${params.length + 2}::integer)`;
+    params.push(cursorTimestamp);
+    params.push(cursorId);
+  }
+  
+  query += ` ORDER BY timeline.created_at DESC, timeline.id DESC LIMIT $${params.length + 1}`;
+  params.push(pageLimit);
+
+  return db.query(query, params);
+}
+
+// Helper function to fetch timeline using feed cache (for normal users)
+async function getCachedTimeline(userId, limit, cursor) {
+  const cacheKey = `feed:${userId}`;
+  
+  // Try to get from cache first
+  let feedData = await redisClient.helper.get(cacheKey);
+  
+  if (!feedData) {
+    // If cache miss, fetch from database and cache it
+    const result = await db.query(
+      `SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
+              u.username, u.display_name, u.avatar_url,
+              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
+              t.retweet_count, t.like_count, t.reply_count,
+              false as is_retweet, NULL::timestamp as retweeted_at
+       FROM tweets t
+       JOIN users u ON t.user_id = u.id
+       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
+       LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $1
+       WHERE t.user_id IN (
+         SELECT following_id FROM follows WHERE follower_id = $1
+       ) OR t.user_id = $1
+       ORDER BY t.created_at DESC
+       LIMIT 500`,
+      [userId]
+    );
+    
+    feedData = result.rows;
+    // Cache for 5 minutes
+    await redisClient.helper.set(cacheKey, JSON.stringify(feedData), 'EX', 300);
+  } else {
+    feedData = JSON.parse(feedData);
+  }
+  
+  // Apply cursor pagination on cached data
+  let startIdx = 0;
+  if (cursor) {
+    try {
+      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+      const { id } = JSON.parse(decoded);
+      startIdx = feedData.findIndex(t => t.id == id) + 1;
+    } catch (error) {
+      logger.warn('Invalid cursor:', error);
+    }
+  }
+  
+  const pageLimit = Math.min(parseInt(limit), 100);
+  const tweets = feedData.slice(startIdx, startIdx + pageLimit);
+  const hasMore = startIdx + pageLimit < feedData.length;
+  
+  return {
+    tweets,
+    hasMore,
+    nextCursor: hasMore ? Buffer.from(JSON.stringify({ id: tweets[tweets.length - 1].id })).toString('base64') : null
+  };
+}
+
+// Get user timeline with hybrid logic (pull-based for hot users, cached for normal users)
 router.get('/', authenticate, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { limit = 50, cursor = null } = req.query;
-    const pageLimit = Math.min(parseInt(limit) + 1, 100); // Fetch one extra to check if there's more
 
-    // Example: Validate token with auth service (for demonstration)
-    // In practice, this would be done in middleware, but showing internal call
+    // Example: Validate token with auth service
     try {
       const tokenValidation = await authService.validateToken(req.headers.authorization?.replace('Bearer ', ''));
       logger.info(`Token validated for user: ${tokenValidation.user.username}`);
@@ -21,75 +162,62 @@ router.get('/', authenticate, async (req, res) => {
       return res.status(401).json({ error: 'Token validation failed' });
     }
 
-    // Get timeline for authenticated user (following + own tweets + retweets)
-    let query = `
-      SELECT * FROM (
-        SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
-               u.username, u.display_name, u.avatar_url,
-               CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
-               CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
-               t.retweet_count,
-               t.like_count,
-               t.reply_count,
-               false as is_retweet,
-               NULL::timestamp as retweeted_at
-        FROM tweets t
-        JOIN users u ON t.user_id = u.id
-        LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
-        LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $1
-        WHERE (t.user_id = $1 OR t.user_id IN (
-          SELECT following_id FROM follows WHERE follower_id = $1
-        ))
+    let result;
+    let strategy;
 
-        UNION ALL
-
-        SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
-               u.username, u.display_name, u.avatar_url,
-               CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
-               true as retweeted,
-               t.retweet_count,
-               t.like_count,
-               t.reply_count,
-               true as is_retweet,
-               retweets.created_at as retweeted_at
-        FROM retweets
-        JOIN tweets t ON retweets.tweet_id = t.id
-        JOIN users u ON t.user_id = u.id
-        LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
-        WHERE retweets.user_id = $1 AND NOT EXISTS (
-          SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = t.user_id
-        ) AND t.user_id != $1
-      ) AS timeline
-    `;
-
-    let params = [userId];
+    // Check if current user is a hot user (should use pull-based)
+    const userIsHot = await isHotUser(userId);
     
-    // Parse opaque cursor if provided (base64 encoded)
-    let cursorTimestamp = null;
-    let cursorId = null;
-    if (cursor) {
-      try {
-        const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
-        const cursorData = JSON.parse(decoded);
-        cursorTimestamp = cursorData.timestamp;
-        cursorId = cursorData.id;
-      } catch (error) {
-        logger.warn('Invalid cursor format:', error);
-        return res.status(400).json({ error: 'Invalid cursor' });
+    if (userIsHot) {
+      logger.info(`Using pull-based timeline for hot user ${userId}`);
+      strategy = 'pull-based';
+      result = await getPullBasedTimeline(userId, limit, cursor);
+      
+      const hasMore = result.rows.length > parseInt(limit);
+      const tweets = hasMore ? result.rows.slice(0, parseInt(limit)) : result.rows;
+      
+      let nextCursor = null;
+      if (hasMore && tweets.length > 0) {
+        const lastTweet = tweets[tweets.length - 1];
+        const cursorData = JSON.stringify({
+          timestamp: lastTweet.created_at,
+          id: lastTweet.id
+        });
+        nextCursor = Buffer.from(cursorData).toString('base64');
       }
-    }
-    
-    // Add cursor filtering if provided (keyset pagination)
-    if (cursorTimestamp && cursorId) {
-      query += ` WHERE (timeline.created_at, timeline.id) < ($${params.length + 1}::timestamp with time zone, $${params.length + 2}::integer)`;
-      params.push(cursorTimestamp);
-      params.push(cursorId);
-    }
-    
-    query += ` ORDER BY timeline.created_at DESC, timeline.id DESC LIMIT $${params.length + 1}`;
-    params.push(pageLimit);
 
-    const result = await db.query(query, params);
+      return res.json({
+        data: { tweets },
+        pagination: {
+          limit: parseInt(limit),
+          cursor: cursor || null,
+          nextCursor: nextCursor,
+          hasMore: hasMore,
+          strategy: strategy
+        }
+      });
+    } else {
+      logger.info(`Using cached feed timeline for normal user ${userId}`);
+      strategy = 'cached-feed';
+      result = await getCachedTimeline(userId, limit, cursor);
+
+      return res.json({
+        data: { tweets: result.tweets },
+        pagination: {
+          limit: parseInt(limit),
+          cursor: cursor || null,
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore,
+          strategy: strategy
+        }
+      });
+    }
+  } catch (error) {
+    logger.error('Error fetching timeline:', error);
+    res.status(500).json({ error: 'Failed to fetch timeline' });
+  }
+});
+
 
     // Check if there are more results
     const hasMore = result.rows.length > parseInt(limit);
