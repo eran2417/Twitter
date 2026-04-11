@@ -104,9 +104,12 @@ router.post('/', authenticate,
         logger.info(`Hot user ${req.user.id} - skipping fan-out, using pull-based for followers`);
       }
 
-      // Invalidate creator's timeline cache (they just posted new content)
-      await redisClient.helper.delPattern(`timeline:${req.user.id}:*`);
-      
+      // Invalidate creator's timeline and feed caches (they just posted new content)
+      await Promise.all([
+        redisClient.helper.delPattern(`timeline:${req.user.id}:*`),
+        redisClient.helper.del(CACHE_KEYS.FEED(req.user.id))
+      ]);
+
       // For non-hot users: feed caches already updated via fan-out above
       // For hot users: followers will see tweet on next cache refresh (TTL-based expiration)
       logger.debug(`Tweet cache strategy: ${isHotUser ? 'TTL-based' : 'fan-out'}`);
@@ -267,8 +270,11 @@ router.delete('/:id', authenticate, async (req, res, next) => {
     }
 
     // Invalidate caches
-    await redisClient.helper.del(`tweet:${id}`);
-    await redisClient.helper.delPattern(`timeline:${req.user.id}:*`);
+    await Promise.all([
+      redisClient.helper.del(`tweet:${id}`),
+      redisClient.helper.delPattern(`timeline:${req.user.id}:*`),
+      redisClient.helper.del(CACHE_KEYS.FEED(req.user.id))
+    ]);
 
     res.json({ message: 'Tweet deleted successfully' });
   } catch (error) {
