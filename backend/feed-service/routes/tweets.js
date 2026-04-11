@@ -1,0 +1,387 @@
+const express = require('express');
+const { body, param, validationResult } = require('express-validator');
+const { db, kafkaProducer, logger, authenticate, optionalAuth } = require('../../shared');
+const redisClient = require('../../shared/services/redis');
+const { HOT_USER_THRESHOLD, CACHE_KEYS, CACHE_TTL, FEED_LIMITS, TWEET_CONSTRAINTS } = require('../constants');
+const { publishTweetEvents } = require('../services/tweetEvents');
+
+const router = express.Router();
+
+// Create tweet
+router.post('/', authenticate,
+  [
+    body('content')
+      .isLength({ min: TWEET_CONSTRAINTS.MIN_LENGTH, max: TWEET_CONSTRAINTS.MAX_LENGTH })
+      .withMessage(`Tweet must be ${TWEET_CONSTRAINTS.MIN_LENGTH}-${TWEET_CONSTRAINTS.MAX_LENGTH} characters`),
+    body('replyToTweetId').optional().isInt(),
+    body('mediaUrls').optional().isArray(),
+    body('hashtags').optional().isArray(),
+    body('mentions').optional().isArray()
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { content, replyToTweetId, mediaUrls, hashtags, mentions } = req.body;
+
+      const result = await db.transaction(async (client) => {
+        // Insert tweet
+        const tweetResult = await client.query(
+          `INSERT INTO tweets (user_id, content, reply_to_tweet_id, media_urls, hashtags, mentions)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, user_id, content, reply_to_tweet_id, media_urls, hashtags, mentions,
+                     like_count, retweet_count, reply_count, created_at`,
+          [req.user.id, content, replyToTweetId || null, mediaUrls || [], hashtags || [], mentions || []]
+        );
+
+        const tweet = tweetResult.rows[0];
+
+        // Update reply count if it's a reply
+        if (replyToTweetId) {
+          await client.query(
+            'UPDATE tweets SET reply_count = reply_count + 1 WHERE id = $1',
+            [replyToTweetId]
+          );
+        }
+
+        // Get user info
+        const userResult = await client.query(
+          'SELECT username, display_name, avatar_url, verified FROM users WHERE id = $1',
+          [req.user.id]
+        );
+
+        return { ...tweet, ...userResult.rows[0] };
+      });
+
+      // Publish tweet events async (Kafka, notifications) - fire and forget
+      publishTweetEvents(result, req.user.id).catch(err => 
+        logger.error('Background event publishing failed:', err)
+      );
+
+      // Determine feed strategy: Check if user is hot (>5000 followers)
+      let isHotUser = false;
+      try {
+        const userResult = await db.query(
+          'SELECT follower_count FROM users WHERE id = $1',
+          [req.user.id]
+        );
+        isHotUser = userResult.rows.length > 0 && userResult.rows[0].follower_count >= HOT_USER_THRESHOLD;
+      } catch (error) {
+        logger.warn('Failed to determine hot user status:', error.message);
+      }
+
+      // For non-hot users: Fan-out tweet to followers' Redis caches
+      if (!isHotUser) {
+        try {
+          logger.info(`Fan-out tweet ${result.id} to followers of non-hot user ${req.user.id}`);
+          const followersResult = await db.query(
+            'SELECT follower_id FROM follows WHERE following_id = $1',
+            [req.user.id]
+          );
+          
+          for (const { follower_id } of followersResult.rows) {
+            try {
+              const cacheKey = `feed:${follower_id}`;
+              const feedData = await redisClient.helper.get(cacheKey);
+              if (feedData) {
+                // Prepend new tweet to cached feed
+                const feed = Array.isArray(feedData) ? feedData : JSON.parse(feedData);
+                feed.unshift(result);
+                feed.splice(FEED_LIMITS.MAX_CACHED_TWEETS); // Keep only max tweets
+                await redisClient.helper.set(cacheKey, feed, CACHE_TTL.FEED);
+              }
+            } catch (error) {
+              logger.warn(`Failed to fan-out to follower ${follower_id}:`, error.message);
+            }
+          }
+        } catch (error) {
+          logger.warn('Failed to fan-out tweet:', error.message);
+        }
+      } else {
+        logger.info(`Hot user ${req.user.id} - skipping fan-out, using pull-based for followers`);
+      }
+
+      // Invalidate creator's timeline and feed caches (they just posted new content)
+      await Promise.all([
+        redisClient.helper.delPattern(`timeline:${req.user.id}:*`),
+        redisClient.helper.del(CACHE_KEYS.FEED(req.user.id))
+      ]);
+
+      // For non-hot users: feed caches already updated via fan-out above
+      // For hot users: followers will see tweet on next cache refresh (TTL-based expiration)
+      logger.debug(`Tweet cache strategy: ${isHotUser ? 'TTL-based' : 'fan-out'}`);
+
+      logger.info(`Tweet created by user ${req.user.id}`);
+
+      res.status(201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// Get tweet by ID
+router.get('/:id', optionalAuth, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId || null;
+
+    const cacheKey = `tweet:${id}`;
+    const cached = await redisClient.helper.get(cacheKey);
+
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const result = await db.query(
+      `SELECT t.id, t.user_id, t.content, t.reply_to_tweet_id, t.media_urls,
+              t.hashtags, t.mentions, t.like_count, t.retweet_count, t.reply_count,
+              t.created_at, t.updated_at, u.username, u.display_name, u.avatar_url, u.verified,
+              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
+              false as is_retweet,
+              NULL::timestamp as retweeted_at
+       FROM tweets t
+       JOIN users u ON t.user_id = u.id
+       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $2
+       LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $2
+       WHERE t.id = $1`,
+      [id, userId],
+      { write: false }
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Tweet not found' });
+    }
+
+    const tweet = result.rows[0];
+
+    await redisClient.helper.set(cacheKey, tweet, 300);
+
+    res.json(tweet);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Like tweet
+router.post('/:id/like', authenticate, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    await db.transaction(async (client) => {
+      // Check if already liked
+      const existingLike = await client.query(
+        'SELECT 1 FROM likes WHERE user_id = $1 AND tweet_id = $2',
+        [req.user.id, id]
+      );
+
+      if (existingLike.rows.length > 0) {
+        throw { statusCode: 400, message: 'Tweet already liked' };
+      }
+
+      // Insert like
+      await client.query(
+        'INSERT INTO likes (user_id, tweet_id) VALUES ($1, $2)',
+        [req.user.id, id]
+      );
+    });
+
+    // Publish to Kafka
+    try {
+      await kafkaProducer.publishTweetLiked(id, req.user.id);
+    } catch (kafkaError) {
+      logger.error('Failed to publish tweet liked event:', kafkaError);
+    }
+
+    // Notify tweet author about the like via Kafka
+    try {
+      // Get tweet author from database
+      const tweetResult = await db.query(
+        'SELECT user_id FROM tweets WHERE id = $1',
+        [id],
+        { write: false }
+      );
+
+      if (tweetResult.rows.length > 0) {
+        const tweetAuthorId = tweetResult.rows[0].user_id;
+
+        // Don't notify if user liked their own tweet
+        if (tweetAuthorId !== req.user.id) {
+          await kafkaProducer.publishNotification(tweetAuthorId, 'tweet_liked', {
+            message: `Your tweet was liked`,
+            tweet_id: id,
+            from_user_id: req.user.id
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to queue like notification:', error.message);
+    }
+
+    // Invalidate caches
+    await redisClient.helper.del(`tweet:${id}`);
+
+    res.json({ message: 'Tweet liked successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Unlike tweet
+router.delete('/:id/like', authenticate, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      'DELETE FROM likes WHERE user_id = $1 AND tweet_id = $2 RETURNING id',
+      [req.user.id, id],
+      { write: true }
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Like not found' });
+    }
+
+    await redisClient.helper.del(`tweet:${id}`);
+
+    res.json({ message: 'Tweet unliked successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete tweet
+router.delete('/:id', authenticate, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      'DELETE FROM tweets WHERE id = $1 AND user_id = $2 RETURNING id',
+      [id, req.user.id],
+      { write: true }
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Tweet not found or unauthorized' });
+    }
+
+    // Invalidate caches
+    await Promise.all([
+      redisClient.helper.del(`tweet:${id}`),
+      redisClient.helper.delPattern(`timeline:${req.user.id}:*`),
+      redisClient.helper.del(CACHE_KEYS.FEED(req.user.id))
+    ]);
+
+    res.json({ message: 'Tweet deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Retweet
+router.post('/:id/retweet', authenticate, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    await db.transaction(async (client) => {
+      // Check if already retweeted
+      const existingRetweet = await client.query(
+        'SELECT 1 FROM retweets WHERE user_id = $1 AND tweet_id = $2',
+        [req.user.id, id]
+      );
+
+      if (existingRetweet.rows.length > 0) {
+        throw { statusCode: 400, message: 'Tweet already retweeted' };
+      }
+
+      // Insert retweet
+      await client.query(
+        'INSERT INTO retweets (user_id, tweet_id) VALUES ($1, $2)',
+        [req.user.id, id]
+      );
+
+      // Update retweet count
+      await client.query(
+        'UPDATE tweets SET retweet_count = retweet_count + 1 WHERE id = $1',
+        [id]
+      );
+    });
+
+    // Publish to Kafka
+    try {
+      await kafkaProducer.publishTweetRetweeted(id, req.user.id);
+    } catch (kafkaError) {
+      logger.error('Failed to publish tweet retweeted event:', kafkaError);
+    }
+
+    // Example: Notify tweet author about the retweet (call notification service)
+    try {
+      // Get tweet author from database
+      const tweetResult = await db.query(
+        'SELECT user_id FROM tweets WHERE id = $1',
+        [id],
+        { write: false }
+      );
+
+      if (tweetResult.rows.length > 0) {
+        const tweetAuthorId = tweetResult.rows[0].user_id;
+
+        // Don't notify if user retweeted their own tweet
+        if (tweetAuthorId !== req.user.id) {
+          await kafkaProducer.publishNotification(tweetAuthorId, 'tweet_retweeted', {
+            message: `Your tweet was retweeted`,
+            tweet_id: id,
+            from_user_id: req.user.id
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to queue retweet notification:', error.message);
+    }
+
+    // Invalidate caches
+    await redisClient.helper.del(`tweet:${id}`);
+
+    res.json({ message: 'Tweet retweeted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Unretweet
+router.delete('/:id/retweet', authenticate, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.transaction(async (client) => {
+      const deleteResult = await client.query(
+        'DELETE FROM retweets WHERE user_id = $1 AND tweet_id = $2 RETURNING id',
+        [req.user.id, id]
+      );
+
+      if (deleteResult.rows.length === 0) {
+        throw { statusCode: 404, message: 'Retweet not found' };
+      }
+
+      // Update retweet count
+      await client.query(
+        'UPDATE tweets SET retweet_count = retweet_count - 1 WHERE id = $1 AND retweet_count > 0',
+        [id]
+      );
+
+      return deleteResult;
+    });
+
+    await redisClient.helper.del(`tweet:${id}`);
+
+    res.json({ message: 'Retweet removed successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+module.exports = router;

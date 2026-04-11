@@ -427,6 +427,43 @@ For production deployment:
 6. **Scaling**: Kubernetes for orchestration
 7. **CDN**: Serve static assets via CDN
 
+## 💾 Backup & Restore Procedures
+
+### Database Backup
+```bash
+# Create isolated backup (recommended)
+./run-backup-with-container.sh
+
+# Or create backup with services running
+./scripts/backup-database.sh
+```
+
+### Database Restore
+```bash
+# Restore from latest backup
+./scripts/restore-database.sh latest
+
+# Restore from specific backup file
+./scripts/restore-database.sh backups/twitter_backup_20260207_220034.sql.gz
+```
+
+### Important: Elasticsearch Sync After Restore
+⚠️ **After database restore, Elasticsearch indices become out of sync!**
+
+The restore script automatically syncs Elasticsearch, but if you need to sync manually:
+
+```bash
+# Sync Elasticsearch with current PostgreSQL data
+./scripts/sync-elasticsearch.sh
+```
+
+This reindexes all users and tweets from PostgreSQL to Elasticsearch, ensuring Kibana shows current data.
+
+### Backup Schedule
+- **Automatic**: Daily at 2 AM (configurable in crontab)
+- **Manual**: Run `./run-backup-with-container.sh` anytime
+- **Retention**: 7 days (configurable in scripts)
+
 ## 📚 Key Concepts Demonstrated
 
 ### Data Intensive Applications

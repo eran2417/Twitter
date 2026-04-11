@@ -54,17 +54,18 @@ export const useAuthStore = create(
       verifyToken: async () => {
         const token = localStorage.getItem('token')
         if (!token) {
-          set({ isAuthenticated: false })
+          set({ isAuthenticated: false, isLoading: false })
           return false
         }
 
+        set({ isLoading: true })
         try {
           const response = await authAPI.verify()
-          set({ user: response.data.user, token, isAuthenticated: true })
+          set({ user: response.data.user, token, isAuthenticated: true, isLoading: false })
           return true
         } catch (error) {
           localStorage.removeItem('token')
-          set({ user: null, token: null, isAuthenticated: false })
+          set({ user: null, token: null, isAuthenticated: false, isLoading: false })
           return false
         }
       },

@@ -3,7 +3,7 @@ import axios from 'axios'
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 const api = axios.create({
-  baseURL: `${API_URL}/api`,
+  baseURL: `${API_URL}/api/v1`,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -59,7 +59,12 @@ export const tweetAPI = {
 }
 
 export const timelineAPI = {
-  getTimeline: (params) => api.get('/timeline', { params }),
+  getTimeline: async (params) => {
+    const response = await api.get('/timeline', { params })
+    console.log('timelineAPI.getTimeline raw response:', response)
+    console.log('response.data:', response.data)
+    return response.data
+  },
   getTrending: (params) => api.get('/timeline/trending/hashtags', { params }),
   searchHashtag: (hashtag, params) => api.get(`/timeline/search/hashtag/${hashtag}`, { params }),
 }
