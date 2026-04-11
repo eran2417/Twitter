@@ -95,6 +95,8 @@ const publishTweetCreated = async (tweet) => {
     tweetId: parseInt(tweet.id),
     userId: parseInt(tweet.user_id),
     content: tweet.content,
+    username: tweet.username || '',
+    displayName: tweet.display_name || '',
     replyToTweetId: tweet.reply_to_tweet_id ? parseInt(tweet.reply_to_tweet_id) : null,
     mediaUrls: tweet.media_urls || [],
     hashtags: extractHashtags(tweet.content),

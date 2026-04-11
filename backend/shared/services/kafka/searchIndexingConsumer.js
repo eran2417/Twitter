@@ -57,11 +57,13 @@ const handleTweetCreated = async (event) => {
     id: event.tweetId,
     user_id: event.userId,
     content: event.content,
+    username: event.username,
+    display_name: event.displayName,
+    created_at: event.createdAt || event.timestamp,
     reply_to_tweet_id: event.replyToTweetId,
     media_urls: event.mediaUrls,
     hashtags: event.hashtags,
     mentions: event.mentions,
-    timestamp: event.timestamp
   };
 
   await elasticsearch.indexTweet(tweetData);
