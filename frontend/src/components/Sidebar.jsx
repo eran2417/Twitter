@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { Home, User, LogOut, Twitter, Search } from 'lucide-react'
+import { Home, User, LogOut, Bird, Search } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
 
 export default function Sidebar() {
@@ -15,7 +15,7 @@ export default function Sidebar() {
     <div className="h-full flex flex-col p-4 bg-dark">
       {/* Logo */}
       <Link to="/" className="mb-8 p-3 hover:bg-gray-800 rounded-full w-fit">
-        <Twitter className="w-8 h-8 text-primary" />
+        <Bird className="w-8 h-8 text-primary" />
       </Link>
 
       {/* Navigation */}

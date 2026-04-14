@@ -15,7 +15,7 @@ export default function TweetCard({ tweet }) {
     onSuccess: () => {
       queryClient.invalidateQueries(['timeline'])
       queryClient.invalidateQueries(['tweet', tweet.id])
-      toast.success('Tweet liked')
+      toast.success('Chirp liked')
     },
   })
 
@@ -24,7 +24,7 @@ export default function TweetCard({ tweet }) {
     onSuccess: () => {
       queryClient.invalidateQueries(['timeline'])
       queryClient.invalidateQueries(['tweet', tweet.id])
-      toast.success('Tweet unliked')
+      toast.success('Chirp unliked')
     },
   })
 
@@ -33,10 +33,10 @@ export default function TweetCard({ tweet }) {
     onSuccess: () => {
       queryClient.invalidateQueries(['timeline'])
       queryClient.invalidateQueries(['tweet', tweet.id])
-      toast.success('Retweeted!')
+      toast.success('Rechirped!')
     },
     onError: (error) => {
-      toast.error(error.response?.data?.message || 'Failed to retweet')
+      toast.error(error.response?.data?.message || 'Failed to rechirp')
     },
   })
 
@@ -45,7 +45,7 @@ export default function TweetCard({ tweet }) {
     onSuccess: () => {
       queryClient.invalidateQueries(['timeline'])
       queryClient.invalidateQueries(['tweet', tweet.id])
-      toast.success('Retweet removed')
+      toast.success('Rechirp removed')
     },
   })
 
@@ -53,7 +53,7 @@ export default function TweetCard({ tweet }) {
     mutationFn: () => tweetAPI.delete(tweet.id),
     onSuccess: () => {
       queryClient.invalidateQueries(['timeline'])
-      toast.success('Tweet deleted')
+      toast.success('Chirp deleted')
     },
   })
 
@@ -68,7 +68,7 @@ export default function TweetCard({ tweet }) {
 
   const handleDelete = (e) => {
     e.stopPropagation()
-    if (window.confirm('Are you sure you want to delete this tweet?')) {
+    if (window.confirm('Are you sure you want to delete this chirp?')) {
       deleteMutation.mutate()
     }
   }
@@ -88,7 +88,7 @@ export default function TweetCard({ tweet }) {
       {tweet.is_retweet && (
         <div className="flex items-center gap-2 text-gray-500 text-sm mb-2 ml-12">
           <Repeat2 className="w-4 h-4" />
-          <span>{tweet.retweeted_by_display_name || tweet.retweeted_by_username} Retweeted</span>
+          <span>{tweet.retweeted_by_display_name || tweet.retweeted_by_username} Rechirped</span>
         </div>
       )}
       <Link to={`/tweet/${tweet.id}`}>

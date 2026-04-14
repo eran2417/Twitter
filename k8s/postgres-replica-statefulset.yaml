@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replica
+spec:
+  ports:
+    - port: 5432
+      name: postgres
+  clusterIP: None # Headless service for stable DNS
+  selector:
+    app: postgres-replica
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-replica
+spec:
+  serviceName: postgres-replica
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-replica
+  template:
+    metadata:
+      labels:
+        app: postgres-replica
+    spec:
+      securityContext:
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        - name: POSTGRES_USER
+          value: twitter_user
+        - name: POSTGRES_PASSWORD
+          value: password
+        - name: POSTGRES_DB
+          value: twitter
+        - name: PRIMARY_HOST
+          value: postgres-primary-0.postgres-primary
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            until pg_isready -h "$PRIMARY_HOST" -p 5432 -U twitter_user; do
+              echo "Waiting for primary..."; sleep 3;
+            done
+            if [ ! -f "$PGDATA/PG_VERSION" ]; then
+              echo "Running pg_basebackup from $PRIMARY_HOST"
+              PGPASSWORD=changeme pg_basebackup \
+                -h "$PRIMARY_HOST" -p 5432 -U repl_user \
+                -D "$PGDATA" -Fp -Xs -R --no-password
+            fi
+            exec postgres -c hot_standby=on
+        volumeMounts:
+        - name: postgres-replica-storage
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-replica-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 5Gi

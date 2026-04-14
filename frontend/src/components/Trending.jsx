@@ -28,7 +28,7 @@ export default function Trending() {
                   <div className="flex-1">
                     <p className="font-semibold">#{item.hashtag}</p>
                     <p className="text-sm text-gray-500">
-                      {item.tweet_count} {item.tweet_count === 1 ? 'tweet' : 'tweets'}
+                      {item.tweet_count} {item.tweet_count === 1 ? 'chirp' : 'chirps'}
                     </p>
                   </div>
                   <span className="text-sm text-gray-500">#{index + 1}</span>

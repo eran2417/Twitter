@@ -113,7 +113,7 @@ export default function SearchPage() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search tweets, hashtags, or users..."
+                placeholder="Search chirps, hashtags, or users..."
                 className="w-full bg-gray-800 rounded-full py-3 px-12 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <svg
@@ -152,7 +152,7 @@ export default function SearchPage() {
               activeTab === 'tweets' ? 'text-white' : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            Tweets
+            Chirps
             {activeTab === 'tweets' && (
               <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-16 h-1 bg-primary rounded-full" />
             )}

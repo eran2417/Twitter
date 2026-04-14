@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: notification-service
+        image: twitter-notification-service:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 3006
+        env:
+        - name: PORT
+          value: "3006"
+        envFrom:
+        - configMapRef:
+            name: shared-config
+        - secretRef:
+            name: shared-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+spec:
+  type: ClusterIP
+  selector:
+    app: notification-service
+  ports:
+    - protocol: TCP
+      port: 3006
+      targetPort: 3006
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-service-config
+data:
+  NODE_ENV: "production"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-service-secrets
+type: Opaque
+stringData:
+  JWT_SECRET: "changeme-minimum-32-chars-long"
