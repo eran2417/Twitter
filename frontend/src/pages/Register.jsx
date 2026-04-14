@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { useAuthStore } from '../stores/authStore'
-import { Twitter } from 'lucide-react'
+import { Bird } from 'lucide-react'
 
 export default function Register() {
   const { register: registerUser, isLoading } = useAuthStore()
@@ -21,7 +21,7 @@ export default function Register() {
     <div className="min-h-screen bg-darker flex items-center justify-center p-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
-          <Twitter className="w-12 h-12 text-primary mx-auto mb-4" />
+          <Bird className="w-12 h-12 text-primary mx-auto mb-4" />
           <h1 className="text-3xl font-bold">Create your account</h1>
         </div>
 

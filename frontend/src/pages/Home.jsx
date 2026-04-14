@@ -113,7 +113,7 @@ export default function Home() {
           </div>
         ) : tweets?.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
-            <p>No tweets yet. Follow some users or create your first tweet!</p>
+            <p>No chirps yet. Follow some users or create your first chirp!</p>
           </div>
         ) : (
           <>
@@ -132,7 +132,7 @@ export default function Home() {
                   {isLoadingMore ? (
                     <Loader2 className="w-4 h-4 inline-block animate-spin" />
                   ) : (
-                    'Load more tweets'
+                    'Load more chirps'
                   )}
                 </button>
               </div>

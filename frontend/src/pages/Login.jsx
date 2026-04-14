@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { useAuthStore } from '../stores/authStore'
-import { Twitter } from 'lucide-react'
+import { Bird } from 'lucide-react'
 
 export default function Login() {
   const { login, isLoading } = useAuthStore()
@@ -20,8 +20,8 @@ export default function Login() {
     <div className="min-h-screen bg-darker flex items-center justify-center p-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
-          <Twitter className="w-12 h-12 text-primary mx-auto mb-4" />
-          <h1 className="text-3xl font-bold">Sign in to Twitter</h1>
+          <Bird className="w-12 h-12 text-primary mx-auto mb-4" />
+          <h1 className="text-3xl font-bold">Sign in to Chirpr</h1>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

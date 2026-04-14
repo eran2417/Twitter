@@ -18,16 +18,16 @@ export default function ComposeTweet() {
     onSuccess: () => {
       queryClient.invalidateQueries(['timeline'])
       reset()
-      toast.success('Tweet posted!')
+      toast.success('Chirp posted!')
     },
     onError: (error) => {
-      toast.error(error.response?.data?.error || 'Failed to post tweet')
+      toast.error(error.response?.data?.error || 'Failed to post chirp')
     },
   })
 
   const onSubmit = (data) => {
     if (!data.content.trim()) {
-      toast.error('Tweet cannot be empty')
+      toast.error('Chirp cannot be empty')
       return
     }
 
@@ -71,7 +71,7 @@ export default function ComposeTweet() {
               className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               <Send className="w-4 h-4" />
-              {createTweetMutation.isPending ? 'Posting...' : 'Tweet'}
+              {createTweetMutation.isPending ? 'Posting...' : 'Chirp'}
             </button>
           </div>
         </form>
