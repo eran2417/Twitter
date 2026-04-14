@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feed-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: feed-service
+  template:
+    metadata:
+      labels:
+        app: feed-service
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: feed-service
+        image: twitter-feed-service:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 3004
+        env:
+        - name: PORT
+          value: "3004"
+        envFrom:
+        - configMapRef:
+            name: shared-config
+        - secretRef:
+            name: shared-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: feed-service
+spec:
+  type: ClusterIP
+  selector:
+    app: feed-service
+  ports:
+    - protocol: TCP
+      port: 3004
+      targetPort: 3004
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feed-service-config
+data:
+  NODE_ENV: "production"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: feed-service-secrets
+type: Opaque
+stringData:
+  JWT_SECRET: "changeme-minimum-32-chars-long"
