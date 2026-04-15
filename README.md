@@ -9,7 +9,7 @@
 │      • Like & Rechirp                                            │
 │      • Follow other users                                        │
 │      • Search chirps & users                                     │
-│      • View real-time timeline via WebSocket                     │
+│      • View real-time timeline via SSE (Server-Sent Events)      │
 │                                                                  │
 │   🔧 Behind the scenes:                                          │
 │      • Data stored in PostgreSQL (primary + replica)            │
@@ -228,7 +228,7 @@ Request from chirpwithlove.com
 │   Browser    │◄──── 201 Created { id, content, ... }
 │   (React)    │
 └──────────────┘
-  React adds chirp to feed via WebSocket event 🎉
+  React prepends chirp to feed instantly via SSE 🎉
 
 
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -357,20 +357,18 @@ SEARCH QUERY:
 User opens chirpwithlove.com
         │
         ▼
-  Socket.io connects with JWT token
+  Browser opens SSE connection: GET /api/v1/timeline/stream?token=JWT
         │
         ▼
-  Server verifies JWT → socket.userId set
-        │
-        ▼
-  Joins room: timeline-{userId}
+  Server verifies JWT → subscribes to Redis channel sse:feed:{userId}
         │
         ▼
   When someone they follow posts a chirp:
-  Server emits "tweet-created" to timeline-{userId}
+  Fan-out publishes to Redis → SSE pushes event to browser
         │
         ▼
   React prepends new chirp to feed without refresh 🔄
+  (falls back to 30s polling if SSE disconnects)
 
 
 HOT USER FOLLOW:

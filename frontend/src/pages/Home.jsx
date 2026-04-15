@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { timelineAPI } from '../api/client'
 import { connectSSE, disconnectSSE } from '../api/sse'
 import { useAuthStore } from '../stores/authStore'
@@ -8,7 +8,6 @@ import TweetCard from '../components/TweetCard'
 import { Loader2 } from 'lucide-react'
 
 export default function Home() {
-  const queryClient = useQueryClient()
   const { user, token, isAuthenticated } = useAuthStore()
   const [tweets, setTweets] = useState([])
   const [cursor, setCursor] = useState(null)
@@ -77,7 +76,6 @@ export default function Home() {
       connectSSE(token, {
         onTweet: (newTweet) => {
           setTweets((prevTweets) => [newTweet, ...prevTweets])
-          queryClient.invalidateQueries({ queryKey: ['timeline'] })
         },
         onConnected: () => setSseConnected(true),
         onDisconnected: () => setSseConnected(false),
@@ -87,7 +85,7 @@ export default function Home() {
         disconnectSSE()
       }
     }
-  }, [queryClient])
+  }, [])
 
   if (error) {
     return (
