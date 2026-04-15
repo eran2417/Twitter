@@ -30,7 +30,8 @@ docker build -t twitter-search-service:latest ./backend -f backend/search-servic
 docker build -t twitter-notification-service:latest ./backend -f backend/notification-service/Dockerfile
 docker build -t twitter-api-gateway:latest ./backend -f backend/api-gateway/Dockerfile
 
-# Build frontend (bakes API URL at build time)
+# Build frontend — VITE_API_URL must be passed at build time (overrides .env which defaults to localhost:3001)
+# For local k8s use http://localhost (nginx ingress on port 80)
 docker build \
   --build-arg VITE_API_URL=http://localhost \
   --build-arg VITE_WS_URL=ws://localhost \
@@ -110,11 +111,11 @@ kubectl exec -it postgres-replica-0 -- \
 ```bash
 # Tweets
 kubectl exec -it $(kubectl get pod -l app=search-service -o jsonpath='{.items[0].metadata.name}') -- \
-  wget -qO- --post-data='' http://localhost:3005/search/reindex
+  wget -qO- --post-data='' http://localhost:3005/api/v1/search/reindex
 
 # Users
 kubectl exec -it $(kubectl get pod -l app=search-service -o jsonpath='{.items[0].metadata.name}') -- \
-  wget -qO- --post-data='' http://localhost:3005/search/reindex-users
+  wget -qO- --post-data='' http://localhost:3005/api/v1/search/reindex-users
 ```
 
 ### Kibana (local, points to production ES)
@@ -164,5 +165,5 @@ Open http://localhost:5602
 | Cache          | Redis                                   |
 | Message Queue  | Kafka + Zookeeper                       |
 | Search         | Elasticsearch                           |
-| Real-time      | Socket.io WebSockets                    |
+| Real-time      | SSE (feed updates) + Socket.io (future chat) |
 | Infra          | Docker, k3s, AWS EC2, ECR Public        |

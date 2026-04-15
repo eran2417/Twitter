@@ -1,14 +1,17 @@
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { tweetAPI } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import toast from 'react-hot-toast'
 import { Send } from 'lucide-react'
+import ComposeWithAI from './ComposeWithAI'
 
 export default function ComposeTweet() {
   const { user } = useAuthStore()
   const queryClient = useQueryClient()
-  const { register, handleSubmit, reset, watch } = useForm()
+  const { register, handleSubmit, reset, watch, setValue } = useForm()
+  const [aiModalOpen, setAiModalOpen] = useState(false)
 
   const content = watch('content', '')
   const charCount = content.length
@@ -41,41 +44,59 @@ export default function ComposeTweet() {
   }
 
   return (
-    <div className="border-b border-gray-800 p-4">
-      <div className="flex gap-3">
-        {/* Avatar */}
-        <div className="flex-shrink-0">
-          <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center font-bold">
-            {user?.username?.[0]?.toUpperCase()}
+    <>
+      <div className="border-b border-gray-800 p-4">
+        <div className="flex gap-3">
+          {/* Avatar */}
+          <div className="flex-shrink-0">
+            <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center font-bold">
+              {user?.username?.[0]?.toUpperCase()}
+            </div>
           </div>
+
+          {/* Input */}
+          <form onSubmit={handleSubmit(onSubmit)} className="flex-1">
+            <textarea
+              {...register('content')}
+              placeholder="What's happening?"
+              className="w-full bg-transparent text-white text-xl placeholder-gray-500 focus:outline-none resize-none"
+              rows={3}
+              maxLength={280}
+            />
+
+            <div className="flex items-center justify-between mt-3">
+              {/* <button
+                type="button"
+                onClick={() => setAiModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-full border border-sky-500 text-sky-400 text-sm font-medium hover:bg-sky-500/10 transition-all"
+              >
+                <Sparkles className="w-4 h-4" />
+                Compose with AI
+              </button> */}
+
+              <div className="flex items-center gap-3">
+                <span className={`text-sm ${charCount > 260 ? 'text-red-500' : 'text-gray-500'}`}>
+                  {charCount} / 280
+                </span>
+                <button
+                  type="submit"
+                  disabled={!content.trim() || charCount > 280 || createTweetMutation.isPending}
+                  className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  {createTweetMutation.isPending ? 'Posting...' : 'Chirp'}
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
-
-        {/* Input */}
-        <form onSubmit={handleSubmit(onSubmit)} className="flex-1">
-          <textarea
-            {...register('content')}
-            placeholder="What's happening?"
-            className="w-full bg-transparent text-white text-xl placeholder-gray-500 focus:outline-none resize-none"
-            rows={3}
-            maxLength={280}
-          />
-
-          <div className="flex items-center justify-between mt-3">
-            <span className={`text-sm ${charCount > 260 ? 'text-red-500' : 'text-gray-500'}`}>
-              {charCount} / 280
-            </span>
-
-            <button
-              type="submit"
-              disabled={!content.trim() || charCount > 280 || createTweetMutation.isPending}
-              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <Send className="w-4 h-4" />
-              {createTweetMutation.isPending ? 'Posting...' : 'Chirp'}
-            </button>
-          </div>
-        </form>
       </div>
-    </div>
+
+      <ComposeWithAI
+        isOpen={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        onUseChirp={(text) => setValue('content', text)}
+      />
+    </>
   )
 }
