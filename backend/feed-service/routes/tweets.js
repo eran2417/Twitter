@@ -93,6 +93,8 @@ router.post('/', authenticate,
                 feed.splice(FEED_LIMITS.MAX_CACHED_TWEETS); // Keep only max tweets
                 await redisClient.helper.set(cacheKey, feed, CACHE_TTL.FEED);
               }
+              // Notify SSE clients for this follower
+              redisClient.publish(`sse:feed:${follower_id}`, JSON.stringify(result)).catch(() => {});
             } catch (error) {
               logger.warn(`Failed to fan-out to follower ${follower_id}:`, error.message);
             }

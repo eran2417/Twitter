@@ -1,4 +1,5 @@
 const express = require('express');
+const Redis = require('ioredis');
 const { db, logger, authenticate } = require('../../shared');
 const redisClient = require('../../shared/services/redis');
 const { HOT_USER_THRESHOLD, CACHE_KEYS, CACHE_TTL, FEED_LIMITS, PAGINATION } = require('../constants');
@@ -487,6 +488,49 @@ router.get('/users/:username/tweets', authenticate, async (req, res) => {
     logger.error('Error fetching user tweets:', error);
     res.status(500).json({ error: 'Failed to fetch user tweets' });
   }
+});
+
+// SSE endpoint — streams new tweets to connected clients via Redis Pub/Sub
+router.get('/stream', authenticate, (req, res) => {
+  const userId = req.user.id;
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
+  res.flushHeaders();
+
+  // Send heartbeat every 30s to keep connection alive through proxies
+  const heartbeat = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 30000);
+
+  // Each SSE connection needs its own Redis subscriber instance
+  const subscriber = new Redis({
+    host: process.env.REDIS_HOST || 'localhost',
+    port: process.env.REDIS_PORT || 6379,
+    password: process.env.REDIS_PASSWORD || undefined,
+  });
+
+  subscriber.subscribe(`sse:feed:${userId}`, (err) => {
+    if (err) {
+      logger.error(`SSE subscribe error for user ${userId}:`, err);
+      res.end();
+    }
+  });
+
+  subscriber.on('message', (_channel, message) => {
+    res.write(`data: ${message}\n\n`);
+  });
+
+  // Cleanup on client disconnect
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    subscriber.unsubscribe();
+    subscriber.quit();
+    logger.info(`SSE connection closed for user ${userId}`);
+  });
 });
 
 module.exports = router;

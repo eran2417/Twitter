@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { timelineAPI } from '../api/client'
-import { connectSocket, disconnectSocket, getSocket } from '../api/socket'
+import { connectSSE, disconnectSSE } from '../api/sse'
 import { useAuthStore } from '../stores/authStore'
 import ComposeTweet from '../components/ComposeTweet'
 import TweetCard from '../components/TweetCard'
@@ -14,6 +14,7 @@ export default function Home() {
   const [cursor, setCursor] = useState(null)
   const [hasMore, setHasMore] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [sseConnected, setSseConnected] = useState(false)
   
   // Check if token exists in localStorage or in store
   const hasToken = token || localStorage.getItem('token')
@@ -21,8 +22,8 @@ export default function Home() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['timeline', null],
     queryFn: () => timelineAPI.getTimeline({ limit: 5, cursor: null }),
-    enabled: !!hasToken, // Enable query if token exists
-    refetchInterval: 30000, // Refresh every 30 seconds
+    enabled: !!hasToken,
+    refetchInterval: sseConnected ? false : 30000, // poll only when SSE is down
   })
 
   if (error) {
@@ -73,16 +74,17 @@ export default function Home() {
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (token) {
-      const socket = connectSocket(token)
-
-      socket.on('tweet-created', (newTweet) => {
-        setTweets((prevTweets) => [newTweet, ...prevTweets])
-        queryClient.invalidateQueries({ queryKey: ['timeline'] })
+      connectSSE(token, {
+        onTweet: (newTweet) => {
+          setTweets((prevTweets) => [newTweet, ...prevTweets])
+          queryClient.invalidateQueries({ queryKey: ['timeline'] })
+        },
+        onConnected: () => setSseConnected(true),
+        onDisconnected: () => setSseConnected(false),
       })
 
       return () => {
-        socket.off('tweet-created')
-        disconnectSocket()
+        disconnectSSE()
       }
     }
   }, [queryClient])

@@ -33,7 +33,8 @@ const authenticate = (req, res, next) => {
 
   // Fallback: Direct JWT verification (for backward compatibility or direct service calls)
   const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+  // Also support token as query param for SSE (EventSource doesn't support custom headers)
+  const token = (authHeader && authHeader.split(' ')[1]) || req.query.token;
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });
