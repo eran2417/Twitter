@@ -116,6 +116,9 @@ router.post('/', authenticate,
       // For hot users: followers will see tweet on next cache refresh (TTL-based expiration)
       logger.debug(`Tweet cache strategy: ${isHotUser ? 'TTL-based' : 'fan-out'}`);
 
+      // Notify the author's own SSE connection so their feed updates instantly
+      redisClient.publish(`sse:feed:${req.user.id}`, JSON.stringify(result)).catch(() => {});
+
       logger.info(`Tweet created by user ${req.user.id}`);
 
       res.status(201).json(result);
