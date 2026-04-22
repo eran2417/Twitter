@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { tweetAPI } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import toast from 'react-hot-toast'
@@ -9,8 +9,7 @@ import ComposeWithAI from './ComposeWithAI'
 
 export default function ComposeTweet() {
   const { user } = useAuthStore()
-  const queryClient = useQueryClient()
-  const { register, handleSubmit, reset, watch, setValue } = useForm()
+const { register, handleSubmit, reset, watch, setValue } = useForm()
   const [aiModalOpen, setAiModalOpen] = useState(false)
 
   const content = watch('content', '')
@@ -19,7 +18,6 @@ export default function ComposeTweet() {
   const createTweetMutation = useMutation({
     mutationFn: (data) => tweetAPI.create(data),
     onSuccess: () => {
-      queryClient.invalidateQueries(['timeline'])
       reset()
       toast.success('Chirp posted!')
     },
