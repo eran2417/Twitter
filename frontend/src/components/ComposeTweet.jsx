@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { tweetAPI } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import toast from 'react-hot-toast'
@@ -9,7 +9,8 @@ import ComposeWithAI from './ComposeWithAI'
 
 export default function ComposeTweet() {
   const { user } = useAuthStore()
-const { register, handleSubmit, reset, watch, setValue } = useForm()
+  const queryClient = useQueryClient()
+  const { register, handleSubmit, reset, watch, setValue } = useForm()
   const [aiModalOpen, setAiModalOpen] = useState(false)
 
   const content = watch('content', '')
@@ -17,7 +18,29 @@ const { register, handleSubmit, reset, watch, setValue } = useForm()
 
   const createTweetMutation = useMutation({
     mutationFn: (data) => tweetAPI.create(data),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const newTweet = response.data
+      // Prepend to current user's profile tweet cache
+      queryClient.setQueryData(['userTweets', user?.username], (old) => {
+        if (!old) return old
+        const firstPage = old.pages[0]
+        return {
+          ...old,
+          pages: [
+            {
+              ...firstPage,
+              data: {
+                ...firstPage.data,
+                data: {
+                  ...firstPage.data?.data,
+                  tweets: [newTweet, ...(firstPage.data?.data?.tweets ?? [])]
+                }
+              }
+            },
+            ...old.pages.slice(1)
+          ]
+        }
+      })
       reset()
       toast.success('Chirp posted!')
     },

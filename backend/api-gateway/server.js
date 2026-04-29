@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 
 // Import route modules
 const { createAuthProxy } = require('./routes/auth');
@@ -35,7 +36,7 @@ app.use(helmet({
 // CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:3000', 'http://localhost:3001'];
+  : ['http://localhost', 'http://localhost:3000', 'http://localhost:3001'];
 
 app.use(cors({
   origin: allowedOrigins,
@@ -45,7 +46,10 @@ app.use(cors({
 }));
 
 // Logging
-app.use(morgan('combined'));
+app.use(morgan('combined'))
+
+// Cookie parsing — needed to read httpOnly auth cookie
+app.use(cookieParser());
 
 // Disable caching for all API responses
 app.use((req, res, next) => {

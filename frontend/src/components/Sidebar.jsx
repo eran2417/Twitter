@@ -1,13 +1,17 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { Home, User, LogOut, Bird, Search } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
+import { useQueryClient } from '@tanstack/react-query'
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const handleLogout = () => {
     logout()
+    queryClient.removeQueries({ queryKey: ['timeline'] })
+    queryClient.removeQueries({ queryKey: ['userTweets'] })
     navigate('/login')
   }
 
@@ -60,7 +64,7 @@ export default function Sidebar() {
             {user?.username?.[0]?.toUpperCase()}
           </div>
           <div className="hidden lg:block flex-1">
-            <p className="font-semibold">{user?.displayName}</p>
+            <p className="font-semibold">{user?.display_name}</p>
             <p className="text-sm text-gray-500">@{user?.username}</p>
           </div>
         </div>

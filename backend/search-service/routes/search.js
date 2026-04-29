@@ -137,7 +137,7 @@ router.get('/trending', async (req, res) => {
  * @desc    Reindex all tweets from database to Elasticsearch
  * @access  Admin only (for now, just protected)
  */
-router.post('/reindex', async (req, res) => {
+router.post('/reindex', authenticate, async (req, res) => {
   try {
     logger.info('Starting tweet reindexing...');
     
@@ -183,7 +183,7 @@ router.post('/reindex', async (req, res) => {
  * @desc    Reindex all users from database to Elasticsearch
  * @access  Admin only
  */
-router.post('/reindex-users', async (req, res) => {
+router.post('/reindex-users', authenticate, async (req, res) => {
   try {
     logger.info('Starting user reindexing...');
     

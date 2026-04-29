@@ -6,9 +6,7 @@ import { Bird } from 'lucide-react'
 export default function Register() {
   const { register: registerUser, isLoading } = useAuthStore()
   const navigate = useNavigate()
-  const { register, handleSubmit, formState: { errors }, watch } = useForm()
-
-  const password = watch('password')
+  const { register, handleSubmit, formState: { errors } } = useForm()
 
   const onSubmit = async (data) => {
     const success = await registerUser(data)

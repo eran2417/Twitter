@@ -4,6 +4,14 @@ const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const { db, logger, kafkaProducer } = require('../../shared');
 
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.COOKIE_SECURE === 'true',
+  sameSite: process.env.COOKIE_SECURE === 'true' ? 'strict' : 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
+  path: '/',
+};
+
 const router = express.Router();
 
 // Register
@@ -85,9 +93,9 @@ router.post('/register',
 
       logger.info(`User registered: ${username}`);
 
+      res.cookie('token', token, COOKIE_OPTIONS);
       res.status(201).json({
         message: 'User registered successfully',
-        token,
         user: result
       });
     } catch (error) {
@@ -146,11 +154,11 @@ router.post('/login',
 
       logger.info(`User logged in: ${username}`);
 
+      res.cookie('token', token, COOKIE_OPTIONS);
       res.json({
-          message: 'Login successful',
-          token,
-          user
-        });
+        message: 'Login successful',
+        user
+      });
     } catch (error) {
       if (error.code === '23505') {
         return res.status(409).json({ 
@@ -165,13 +173,12 @@ router.post('/login',
 // Verify token
 router.get('/verify', async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const token = req.cookies?.token
+      || (req.headers.authorization?.startsWith('Bearer ') && req.headers.authorization.substring(7));
+
+    if (!token) {
       return res.status(401).json({ error: 'No token provided' });
     }
-    
-    const token = authHeader.substring(7);
     
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
@@ -198,6 +205,12 @@ router.get('/verify', async (req, res, next) => {
     }
     next(error);
   }
+});
+
+// Logout — clear the httpOnly cookie
+router.post('/logout', (req, res) => {
+  res.clearCookie('token', { ...COOKIE_OPTIONS, maxAge: 0 });
+  res.json({ message: 'Logged out successfully' });
 });
 
 module.exports = router;

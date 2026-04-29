@@ -9,21 +9,20 @@ const HOT_USER_THRESHOLD = 5000;
 const CACHE_KEYS = {
   FEED: (userId) => `feed:${userId}`,
   TWEET: (tweetId) => `tweet:${tweetId}`,
-  TIMELINE: (userId, page) => `timeline:${userId}:${page}`
+  HOT_USERS: 'hot_users',
+  USER_FOLLOWING: (userId) => `user:${userId}:following`,
+  USER_FOLLOWERS: (userId) => `user:${userId}:followers`
 };
 
 // Cache TTL in seconds
 const CACHE_TTL = {
   FEED: 300,        // 5 minutes
   TWEET: 600,       // 10 minutes
-  TIMELINE: 300     // 5 minutes
 };
 
 // Feed limits
 const FEED_LIMITS = {
-  MAX_CACHED_TWEETS: 500,    // Maximum tweets to keep in cache
-  MAX_PAGE_SIZE: 100,        // Maximum tweets per page request
-  DEFAULT_PAGE_SIZE: 20      // Default tweets per page
+  MAX_CACHED_TWEETS: 500,
 };
 
 // Tweet constraints
@@ -34,8 +33,7 @@ const TWEET_CONSTRAINTS = {
 
 // Pagination
 const PAGINATION = {
-  DEFAULT_LIMIT: 5,
-  MAX_LIMIT: 100
+  DEFAULT_LIMIT: 2,
 };
 
 module.exports = {

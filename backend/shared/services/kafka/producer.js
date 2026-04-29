@@ -165,6 +165,20 @@ const publishUserFollowed = async (followerId, followingId) => {
 };
 
 /**
+ * Publish user unfollowed event
+ */
+const publishUserUnfollowed = async (followerId, followingId) => {
+  const data = {
+    eventType: Events.USER_UNFOLLOWED,
+    timestamp: new Date().toISOString(),
+    followerId: parseInt(followerId),
+    followingId: parseInt(followingId)
+  };
+
+  await sendEvent('user-interactions', data, followerId);
+};
+
+/**
  * Publish user registered event
  */
 const publishUserRegistered = async (user) => {
@@ -229,6 +243,7 @@ module.exports = {
   publishTweetUnliked,
   publishTweetRetweeted,
   publishUserFollowed,
+  publishUserUnfollowed,
   publishUserRegistered,
   publishNotification
 };

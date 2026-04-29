@@ -144,8 +144,11 @@ const processUserEvent = async (message) => {
       break;
 
     case 'user.followed':
+      await elasticsearch.updateUserFollowerCount(event.followingId, 1);
+      break;
+
     case 'user.unfollowed':
-      logger.debug(`Follow event: ${event.followerId} -> ${event.followingId}`);
+      await elasticsearch.updateUserFollowerCount(event.followingId, -1);
       break;
 
     default:

@@ -8,19 +8,9 @@ import Profile from './pages/Profile'
 import TweetDetail from './pages/TweetDetail'
 import Search from './pages/Search'
 import Followers from './pages/Followers'
-import { Loader2 } from 'lucide-react'
 
 function App() {
-  const { isAuthenticated, isLoading } = useAuthStore()
-
-  // Show loading spinner while verifying token
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-darker flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    )
-  }
+  const { isAuthenticated } = useAuthStore()
 
   return (
     <Routes>

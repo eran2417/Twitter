@@ -18,7 +18,7 @@ const Redis = require('ioredis');
 const CONFIG = {
   auth: {
     windowMs: 15 * 60 * 1000,  // 15 minutes
-    maxAttempts: 10            // 10 attempts per window
+    maxAttempts: 100           // 10 attempts per window
   },
   tweet: {
     maxTweets: parseInt(process.env.TWEET_RATE_LIMIT_MAX) || 10,

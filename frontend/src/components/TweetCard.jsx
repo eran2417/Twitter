@@ -6,15 +6,45 @@ import { useAuthStore } from '../stores/authStore'
 import toast from 'react-hot-toast'
 import { Link } from 'react-router-dom'
 
+// Update a tweet in-place across all pages of an infinite query cache
+function updateTweetInPages(old, tweetId, updater) {
+  if (!old) return old
+  return {
+    ...old,
+    pages: old.pages.map(page => ({
+      ...page,
+      data: {
+        ...page.data,
+        data: {
+          ...page.data?.data,
+          tweets: (page.data?.data?.tweets ?? []).map(t =>
+            t.id.toString() === tweetId.toString() ? updater(t) : t
+          )
+        }
+      }
+    }))
+  }
+}
+
 export default function TweetCard({ tweet }) {
   const { user } = useAuthStore()
   const queryClient = useQueryClient()
 
+  const updateAllCaches = (tweetId, updater) => {
+    // Update in all timeline caches (keyed by user id)
+    queryClient.getQueriesData({ queryKey: ['timeline'] }).forEach(([key]) => {
+      queryClient.setQueryData(key, old => updateTweetInPages(old, tweetId, updater))
+    })
+    // Update in all userTweets caches (keyed by username)
+    queryClient.getQueriesData({ queryKey: ['userTweets'] }).forEach(([key]) => {
+      queryClient.setQueryData(key, old => updateTweetInPages(old, tweetId, updater))
+    })
+  }
+
   const likeMutation = useMutation({
     mutationFn: () => tweetAPI.like(tweet.id),
     onSuccess: () => {
-      queryClient.invalidateQueries(['timeline'])
-      queryClient.invalidateQueries(['tweet', tweet.id])
+      updateAllCaches(tweet.id, t => ({ ...t, liked: true, like_count: (t.like_count || 0) + 1 }))
       toast.success('Chirp liked')
     },
   })
@@ -22,17 +52,38 @@ export default function TweetCard({ tweet }) {
   const unlikeMutation = useMutation({
     mutationFn: () => tweetAPI.unlike(tweet.id),
     onSuccess: () => {
-      queryClient.invalidateQueries(['timeline'])
-      queryClient.invalidateQueries(['tweet', tweet.id])
+      updateAllCaches(tweet.id, t => ({ ...t, liked: false, like_count: Math.max((t.like_count || 0) - 1, 0) }))
       toast.success('Chirp unliked')
     },
   })
 
   const retweetMutation = useMutation({
     mutationFn: () => tweetAPI.retweet(tweet.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries(['timeline'])
-      queryClient.invalidateQueries(['tweet', tweet.id])
+    onSuccess: (response) => {
+      const retweetData = response.data
+      // Update retweet count + retweeted flag in-place everywhere
+      updateAllCaches(tweet.id, t => ({ ...t, retweeted: true, retweet_count: (t.retweet_count || 0) + 1 }))
+      // Prepend the retweet entry to current user's profile
+      queryClient.setQueryData(['userTweets', user?.username], old => {
+        if (!old) return old
+        const firstPage = old.pages[0]
+        return {
+          ...old,
+          pages: [
+            {
+              ...firstPage,
+              data: {
+                ...firstPage.data,
+                data: {
+                  ...firstPage.data?.data,
+                  tweets: [retweetData, ...(firstPage.data?.data?.tweets ?? [])]
+                }
+              }
+            },
+            ...old.pages.slice(1)
+          ]
+        }
+      })
       toast.success('Rechirped!')
     },
     onError: (error) => {
@@ -43,8 +94,27 @@ export default function TweetCard({ tweet }) {
   const unretweetMutation = useMutation({
     mutationFn: () => tweetAPI.unretweet(tweet.id),
     onSuccess: () => {
-      queryClient.invalidateQueries(['timeline'])
-      queryClient.invalidateQueries(['tweet', tweet.id])
+      // Update retweet count + retweeted flag in-place everywhere
+      updateAllCaches(tweet.id, t => ({ ...t, retweeted: false, retweet_count: Math.max((t.retweet_count || 0) - 1, 0) }))
+      // Remove the retweet entry from current user's profile
+      queryClient.setQueryData(['userTweets', user?.username], old => {
+        if (!old) return old
+        return {
+          ...old,
+          pages: old.pages.map(page => ({
+            ...page,
+            data: {
+              ...page.data,
+              data: {
+                ...page.data?.data,
+                tweets: (page.data?.data?.tweets ?? []).filter(t =>
+                  !(t.is_retweet && t.id.toString() === tweet.id.toString())
+                )
+              }
+            }
+          }))
+        }
+      })
       toast.success('Rechirp removed')
     },
   })
@@ -52,7 +122,43 @@ export default function TweetCard({ tweet }) {
   const deleteMutation = useMutation({
     mutationFn: () => tweetAPI.delete(tweet.id),
     onSuccess: () => {
-      queryClient.invalidateQueries(['timeline'])
+      // Remove tweet from all caches
+      queryClient.getQueriesData({ queryKey: ['timeline'] }).forEach(([key]) => {
+        queryClient.setQueryData(key, old => {
+          if (!old) return old
+          return {
+            ...old,
+            pages: old.pages.map(page => ({
+              ...page,
+              data: {
+                ...page.data,
+                data: {
+                  ...page.data?.data,
+                  tweets: (page.data?.data?.tweets ?? []).filter(t => t.id.toString() !== tweet.id.toString())
+                }
+              }
+            }))
+          }
+        })
+      })
+      queryClient.getQueriesData({ queryKey: ['userTweets'] }).forEach(([key]) => {
+        queryClient.setQueryData(key, old => {
+          if (!old) return old
+          return {
+            ...old,
+            pages: old.pages.map(page => ({
+              ...page,
+              data: {
+                ...page.data,
+                data: {
+                  ...page.data?.data,
+                  tweets: (page.data?.data?.tweets ?? []).filter(t => t.id.toString() !== tweet.id.toString())
+                }
+              }
+            }))
+          }
+        })
+      })
       toast.success('Chirp deleted')
     },
   })
@@ -104,7 +210,7 @@ export default function TweetCard({ tweet }) {
           <div className="flex-1 min-w-0">
             {/* Header */}
             <div className="flex items-center gap-2 flex-wrap">
-              <Link 
+              <Link
                 to={`/profile/${tweet.username}`}
                 className="font-semibold hover:underline"
                 onClick={(e) => e.stopPropagation()}
@@ -139,7 +245,7 @@ export default function TweetCard({ tweet }) {
                 <span className="text-sm">{tweet.reply_count || 0}</span>
               </button>
 
-              <button 
+              <button
                 onClick={handleRetweet}
                 className={`flex items-center gap-2 transition-colors group ${
                   tweet.retweeted ? 'text-green-500' : 'hover:text-green-500'
@@ -151,13 +257,13 @@ export default function TweetCard({ tweet }) {
                 <span className="text-sm">{tweet.retweet_count || 0}</span>
               </button>
 
-              <button 
+              <button
                 onClick={handleLike}
                 className={`flex items-center gap-2 transition-colors group ${
                   tweet.liked ? 'text-red-500' : 'hover:text-red-500'
                 }`}
               >
-                <Heart 
+                <Heart
                   className={`w-5 h-5 group-hover:bg-red-500/10 rounded-full p-1 transition-colors ${
                     tweet.liked ? 'fill-current' : ''
                   }`}

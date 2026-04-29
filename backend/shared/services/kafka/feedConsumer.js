@@ -12,7 +12,7 @@ const { Kafka, logLevel } = require('kafkajs');
 const logger = require('../../utils/logger');
 const db = require('../../database/pool');
 const redisClient = require('../redis');
-const { CACHE_KEYS, CACHE_TTL, FEED_LIMITS } = require('../../constants');
+const { CACHE_KEYS, HOT_USER_THRESHOLD } = require('../../constants');
 
 // Kafka client configuration
 const kafka = new Kafka({
@@ -68,10 +68,7 @@ const handleTweetCreated = async (event) => {
     );
 
     // Invalidate relevant caches
-    await Promise.all([
-      redisClient.helper.delPattern('timeline:*'),
-      redisClient.helper.delPattern('trending:*')
-    ]);
+    await redisClient.helper.delPattern('trending:*');
 
     logger.info('Updated trending hashtags and invalidated caches');
   } catch (error) {
@@ -109,49 +106,76 @@ const handleUserFollowed = async (event) => {
   logger.info('Processing follow event:', { followerId, followingId });
 
   try {
-    // Update Redis sorted sets for relationship graph (used for recommendations)
+    // Maintain plain sets for SINTER-based hot followee lookup at timeline read time
+    // user:{X}:following — who X follows (plain set, enables SINTER with hot_users)
+    // user:{X}:followers — who follows X (plain set)
     await Promise.all([
-      redisClient.zadd(`user:${followerId}:following`, Date.now(), followingId.toString()),
-      redisClient.zadd(`user:${followingId}:followers`, Date.now(), followerId.toString())
+      redisClient.sadd(CACHE_KEYS.USER_FOLLOWING(followerId), followingId.toString()),
+      redisClient.sadd(CACHE_KEYS.USER_FOLLOWERS(followingId), followerId.toString())
     ]);
 
-    logger.debug('Updated user relationship graph in Redis');
+    logger.debug('Updated user relationship sets in Redis');
 
-    // Invalidate follower's cached feed
-    const cacheKey = CACHE_KEYS.FEED(followerId);
-    await redisClient.helper.del(cacheKey);
-    logger.debug(`Invalidated feed cache for follower ${followerId}`);
-
-    // Fetch and cache the followed user's recent tweets for the follower
-    const tweetsResult = await db.query(
-      `SELECT t.id, t.content, t.user_id, t.created_at, t.updated_at,
-              u.username, u.display_name, u.avatar_url,
-              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
-              CASE WHEN r.user_id IS NOT NULL THEN true ELSE false END as retweeted,
-              t.retweet_count, t.like_count, t.reply_count,
-              false as is_retweet, NULL::timestamp as retweeted_at
-       FROM tweets t
-       JOIN users u ON t.user_id = u.id
-       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $1
-       LEFT JOIN retweets r ON t.id = r.tweet_id AND r.user_id = $1
-       WHERE t.user_id = $2
-       ORDER BY t.created_at DESC
-       LIMIT $3`,
-      [followerId, followingId, FEED_LIMITS.MAX_CACHED_TWEETS],
+    // Check if the followed user is hot — if so add to hot_users set
+    const userResult = await db.query(
+      'SELECT follower_count FROM users WHERE id = $1',
+      [followingId],
       { write: false }
     );
-
-    if (tweetsResult.rows.length > 0) {
-      await redisClient.helper.set(
-        cacheKey,
-        JSON.stringify(tweetsResult.rows),
-        'EX',
-        CACHE_TTL.FEED
-      );
-      logger.info(`Cached ${tweetsResult.rows.length} tweets from user ${followingId} for follower ${followerId}`);
+    if (userResult.rows.length > 0 && userResult.rows[0].follower_count >= HOT_USER_THRESHOLD) {
+      await redisClient.sadd(CACHE_KEYS.HOT_USERS, followingId.toString());
+      logger.debug(`User ${followingId} is hot, added to hot_users set`);
     }
+
+    // Invalidate follower's cached feed — will be rebuilt on next timeline request
+    await redisClient.helper.del(CACHE_KEYS.FEED(followerId));
+    logger.debug(`Invalidated feed cache for follower ${followerId}`);
   } catch (error) {
     logger.error(`Error processing follow event: ${followerId} → ${followingId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Handle user unfollow events
+ * - Remove from Redis relationship sets
+ * - Invalidate follower's feed cache
+ */
+const handleUserUnfollowed = async (event) => {
+  const { followerId, followingId } = event;
+
+  if (!followerId || !followingId) {
+    logger.warn('Missing followerId or followingId in USER_UNFOLLOWED event');
+    return;
+  }
+
+  logger.info('Processing unfollow event:', { followerId, followingId });
+
+  try {
+    await Promise.all([
+      redisClient.srem(CACHE_KEYS.USER_FOLLOWING(followerId), followingId.toString()),
+      redisClient.srem(CACHE_KEYS.USER_FOLLOWERS(followingId), followerId.toString())
+    ]);
+
+    logger.debug('Updated user relationship sets in Redis after unfollow');
+
+    // Check if followingId still qualifies as hot — if not remove from hot_users
+    // Only remove if no one else would have added them (i.e. their count dropped below threshold)
+    const userResult = await db.query(
+      'SELECT follower_count FROM users WHERE id = $1',
+      [followingId],
+      { write: false }
+    );
+    if (userResult.rows.length > 0 && userResult.rows[0].follower_count < HOT_USER_THRESHOLD) {
+      await redisClient.srem(CACHE_KEYS.HOT_USERS, followingId.toString());
+      logger.debug(`User ${followingId} dropped below hot threshold, removed from hot_users set`);
+    }
+
+    // Invalidate follower's cached feed
+    await redisClient.helper.del(CACHE_KEYS.FEED(followerId));
+    logger.debug(`Invalidated feed cache for follower ${followerId}`);
+  } catch (error) {
+    logger.error(`Error processing unfollow event: ${followerId} → ${followingId}:`, error);
     throw error;
   }
 };
@@ -174,9 +198,10 @@ const topicHandlers = {
 
   'user-interactions': async (message) => {
     const event = parseMessage(message);
-    // Handle both formats: 'user.followed' (standard) and 'USER_FOLLOWED' (legacy)
     if (event.eventType === 'user.followed' || event.eventType === 'USER_FOLLOWED') {
       await handleUserFollowed(event);
+    } else if (event.eventType === 'user.unfollowed' || event.eventType === 'USER_UNFOLLOWED') {
+      await handleUserUnfollowed(event);
     }
   }
 };

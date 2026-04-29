@@ -18,8 +18,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-i
  */
 const verifyJwt = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  // Also support token as query param for SSE (EventSource doesn't support custom headers)
-  const token = (authHeader && authHeader.split(' ')[1]) || req.query.token;
+  // Priority: httpOnly cookie → Authorization header → query param (SSE fallback)
+  const token = req.cookies?.token
+    || (authHeader && authHeader.split(' ')[1])
+    || req.query.token;
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });

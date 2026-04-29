@@ -1,6 +1,5 @@
 const express = require('express');
 const { db, kafkaProducer, logger, authenticate } = require('../../shared');
-const redisClient = require('../../shared/services/redis');
 
 const router = express.Router();
 
@@ -50,9 +49,6 @@ router.post('/:userId', authenticate, async (req, res, next) => {
     }
 
     // Invalidate caches
-    await redisClient.helper.delPattern(`user:${req.user.username}`);
-    await redisClient.helper.delPattern(`timeline:${req.user.id}:*`);
-
     res.json({ message: 'User followed successfully' });
   } catch (error) {
     next(error);
@@ -75,9 +71,12 @@ router.delete('/:userId', authenticate, async (req, res, next) => {
       return res.status(404).json({ error: 'Follow relationship not found' });
     }
 
-    // Invalidate caches
-    await redisClient.helper.delPattern(`user:${req.user.username}`);
-    await redisClient.helper.delPattern(`timeline:${req.user.id}:*`);
+    // Publish to Kafka — triggers Redis set cleanup and feed cache invalidation
+    try {
+      await kafkaProducer.publishUserUnfollowed(req.user.id, followingId);
+    } catch (kafkaError) {
+      logger.error('Failed to publish user unfollowed event:', kafkaError);
+    }
 
     res.json({ message: 'User unfollowed successfully' });
   } catch (error) {
@@ -94,32 +93,24 @@ router.get('/:userId/followers', authenticate, async (req, res, next) => {
 
     const result = await db.query(
       `SELECT u.id, u.username, u.display_name, u.avatar_url, u.verified,
-              u.follower_count, u.following_count
+              u.follower_count, u.following_count,
+              CASE WHEN u.id = $4 THEN false
+                   WHEN cf.follower_id IS NOT NULL THEN true
+                   ELSE false
+              END as "isFollowing"
        FROM users u
        JOIN follows f ON u.id = f.follower_id
+       LEFT JOIN follows cf ON cf.follower_id = $4 AND cf.following_id = u.id
        WHERE f.following_id = $1
        ORDER BY f.created_at DESC
        LIMIT $2 OFFSET $3`,
-      [userId, limit, offset],
+      [userId, limit, offset, req.user.id],
       { write: false }
     );
 
-    // Add isFollowing status
-    const followers = await Promise.all(result.rows.map(async (user) => {
-      if (user.id === req.user.id) {
-        return { ...user, isFollowing: false };
-      }
-      const followResult = await db.query(
-        'SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2',
-        [req.user.id, user.id],
-        { write: false }
-      );
-      return { ...user, isFollowing: followResult.rows.length > 0 };
-    }));
-
     res.json({
-      followers,
-      count: followers.length,
+      followers: result.rows,
+      count: result.rows.length,
       offset,
       limit
     });
@@ -137,32 +128,24 @@ router.get('/:userId/following', authenticate, async (req, res, next) => {
 
     const result = await db.query(
       `SELECT u.id, u.username, u.display_name, u.avatar_url, u.verified,
-              u.follower_count, u.following_count
+              u.follower_count, u.following_count,
+              CASE WHEN u.id = $4 THEN false
+                   WHEN cf.follower_id IS NOT NULL THEN true
+                   ELSE false
+              END as "isFollowing"
        FROM users u
        JOIN follows f ON u.id = f.following_id
+       LEFT JOIN follows cf ON cf.follower_id = $4 AND cf.following_id = u.id
        WHERE f.follower_id = $1
        ORDER BY f.created_at DESC
        LIMIT $2 OFFSET $3`,
-      [userId, limit, offset],
+      [userId, limit, offset, req.user.id],
       { write: false }
     );
 
-    // Add isFollowing status
-    const following = await Promise.all(result.rows.map(async (user) => {
-      if (user.id === req.user.id) {
-        return { ...user, isFollowing: false };
-      }
-      const followResult = await db.query(
-        'SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2',
-        [req.user.id, user.id],
-        { write: false }
-      );
-      return { ...user, isFollowing: followResult.rows.length > 0 };
-    }));
-
     res.json({
-      following,
-      count: following.length,
+      following: result.rows,
+      count: result.rows.length,
       offset,
       limit
     });

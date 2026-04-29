@@ -1,5 +1,5 @@
 import { useParams, Link } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { userAPI, followAPI } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import TweetCard from '../components/TweetCard'
@@ -17,10 +17,14 @@ export default function Profile() {
     queryFn: () => userAPI.getProfile(username),
   })
 
-  const { data: tweets, isLoading: tweetsLoading } = useQuery({
+  const { data, isLoading: tweetsLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ['userTweets', username],
-    queryFn: () => userAPI.getUserTweets(username, { limit: 50 }),
+    queryFn: ({ pageParam }) => userAPI.getUserTweets(username, pageParam),
+    getNextPageParam: (lastPage) => lastPage?.data?.pagination?.nextCursor ?? undefined,
+    staleTime: Infinity,
   })
+
+  const tweets = data?.pages.flatMap(p => p.data?.data?.tweets ?? []) ?? []
 
   const followMutation = useMutation({
     mutationFn: () => followAPI.follow(profile.data.id),
@@ -68,8 +72,8 @@ export default function Profile() {
             <button
               onClick={() => user?.isFollowing ? unfollowMutation.mutate() : followMutation.mutate()}
               className={`flex items-center gap-2 px-4 py-2 rounded-full font-semibold transition-colors ${
-                user?.isFollowing 
-                  ? 'bg-transparent border border-gray-600 text-white hover:border-red-500 hover:text-red-500' 
+                user?.isFollowing
+                  ? 'bg-transparent border border-gray-600 text-white hover:border-red-500 hover:text-red-500'
                   : 'bg-white text-black hover:bg-gray-200'
               }`}
             >
@@ -104,7 +108,7 @@ export default function Profile() {
         <div className="flex items-center gap-2 mt-3 text-gray-500">
           <Calendar className="w-4 h-4" />
           <span className="text-sm">
-            Joined {format(new Date(user?.created_at), 'MMMM yyyy')}
+            Joined {user?.created_at ? format(new Date(user.created_at), 'MMMM yyyy') : ''}
           </span>
         </div>
 
@@ -126,14 +130,32 @@ export default function Profile() {
           <div className="flex items-center justify-center p-8">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
-        ) : tweets?.data?.data?.tweets?.length === 0 ? (
+        ) : tweets.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             <p>No tweets yet</p>
           </div>
         ) : (
-          tweets?.data?.data?.tweets?.map((tweet) => (
-            <TweetCard key={tweet.id} tweet={tweet} />
-          ))
+          <>
+            {tweets.map((tweet) => (
+              <TweetCard key={tweet.id} tweet={tweet} />
+            ))}
+
+            {hasNextPage && (
+              <div className="p-4 text-center border-t border-gray-800">
+                <button
+                  onClick={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  className="px-4 py-2 text-primary hover:bg-gray-900/50 rounded-full disabled:opacity-50"
+                >
+                  {isFetchingNextPage ? (
+                    <Loader2 className="w-4 h-4 inline-block animate-spin" />
+                  ) : (
+                    'Load more chirps'
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
