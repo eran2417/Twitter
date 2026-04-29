@@ -75,14 +75,15 @@ const sendEvent = async (topic, data, key) => {
 
 // Event types
 const Events = {
-  TWEET_CREATED: 'tweet.created',
-  TWEET_DELETED: 'tweet.deleted',
-  TWEET_LIKED: 'tweet.liked',
-  TWEET_UNLIKED: 'tweet.unliked',
-  TWEET_RETWEETED: 'tweet.retweeted',
-  USER_FOLLOWED: 'user.followed',
-  USER_UNFOLLOWED: 'user.unfollowed',
-  USER_REGISTERED: 'user.registered'
+  TWEET_CREATED:     'tweet.created',
+  TWEET_DELETED:     'tweet.deleted',
+  TWEET_LIKED:       'tweet.liked',
+  TWEET_UNLIKED:     'tweet.unliked',
+  TWEET_RETWEETED:   'tweet.retweeted',
+  TWEET_UNRETWEETED: 'tweet.unretweeted',
+  USER_FOLLOWED:     'user.followed',
+  USER_UNFOLLOWED:   'user.unfollowed',
+  USER_REGISTERED:   'user.registered'
 };
 
 /**
@@ -108,46 +109,21 @@ const publishTweetCreated = async (tweet) => {
 };
 
 /**
- * Publish tweet liked event
+ * Publish a tweet interaction event (like, unlike, retweet, unretweet)
  */
-const publishTweetLiked = async (tweetId, userId) => {
-  const data = {
-    eventType: Events.TWEET_LIKED,
+const publishTweetInteraction = async (eventType, tweetId, userId) => {
+  await sendEvent('tweet-interactions', {
+    eventType,
     timestamp: new Date().toISOString(),
     tweetId: parseInt(tweetId),
     userId: parseInt(userId)
-  };
-
-  await sendEvent('tweet-interactions', data, tweetId);
+  }, tweetId);
 };
 
-/**
- * Publish tweet unliked event
- */
-const publishTweetUnliked = async (tweetId, userId) => {
-  const data = {
-    eventType: Events.TWEET_UNLIKED,
-    timestamp: new Date().toISOString(),
-    tweetId: parseInt(tweetId),
-    userId: parseInt(userId)
-  };
-
-  await sendEvent('tweet-interactions', data, tweetId);
-};
-
-/**
- * Publish tweet retweeted event
- */
-const publishTweetRetweeted = async (tweetId, userId) => {
-  const data = {
-    eventType: Events.TWEET_RETWEETED,
-    timestamp: new Date().toISOString(),
-    tweetId: parseInt(tweetId),
-    userId: parseInt(userId)
-  };
-
-  await sendEvent('tweet-interactions', data, tweetId);
-};
+const publishTweetLiked       = (tweetId, userId) => publishTweetInteraction(Events.TWEET_LIKED,       tweetId, userId);
+const publishTweetUnliked     = (tweetId, userId) => publishTweetInteraction(Events.TWEET_UNLIKED,     tweetId, userId);
+const publishTweetRetweeted   = (tweetId, userId) => publishTweetInteraction(Events.TWEET_RETWEETED,   tweetId, userId);
+const publishTweetUnretweeted = (tweetId, userId) => publishTweetInteraction(Events.TWEET_UNRETWEETED, tweetId, userId);
 
 /**
  * Publish user followed event
@@ -242,6 +218,7 @@ module.exports = {
   publishTweetLiked,
   publishTweetUnliked,
   publishTweetRetweeted,
+  publishTweetUnretweeted,
   publishUserFollowed,
   publishUserUnfollowed,
   publishUserRegistered,
