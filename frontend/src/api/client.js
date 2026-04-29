@@ -7,28 +7,16 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // send httpOnly cookie on every request
 })
 
-// Request interceptor to add auth token
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
-
-// Response interceptor to handle errors
+// Response interceptor to handle auth errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token')
+    // Don't redirect on verify — it's expected to 401 when not logged in
+    const isVerify = error.config?.url?.includes('/auth/verify')
+    if (error.response?.status === 401 && !isVerify) {
       window.location.href = '/login'
     }
     return Promise.reject(error)
@@ -38,13 +26,14 @@ api.interceptors.response.use(
 export const authAPI = {
   register: (data) => api.post('/auth/register', data),
   login: (data) => api.post('/auth/login', data),
+  logout: () => api.post('/auth/logout'),
   verify: () => api.get('/auth/verify'),
 }
 
 export const userAPI = {
   getProfile: (username) => api.get(`/users/${username}`),
   updateProfile: (data) => api.patch('/users/me', data),
-  getUserTweets: (username, params) => api.get(`/users/${username}/tweets`, { params }),
+  getUserTweets: (username, cursor) => api.get(`/users/${username}/tweets${cursor ? `?cursor=${cursor}` : ''}`),
   search: (q, params) => api.get('/users/search/query', { params: { q, ...params } }),
 }
 
@@ -59,14 +48,9 @@ export const tweetAPI = {
 }
 
 export const timelineAPI = {
-  getTimeline: async (params) => {
-    const response = await api.get('/timeline', { params })
-    console.log('timelineAPI.getTimeline raw response:', response)
-    console.log('response.data:', response.data)
-    return response.data
-  },
-  getTrending: (params) => api.get('/timeline/trending/hashtags', { params }),
-  searchHashtag: (hashtag, params) => api.get(`/timeline/search/hashtag/${hashtag}`, { params }),
+  getTimeline: (cursor) => api.get(`/timeline${cursor ? `?cursor=${cursor}` : ''}`),
+  getTrending: () => api.get('/timeline/trending/hashtags'),
+  searchHashtag: (hashtag, cursor) => api.get(`/timeline/search/hashtag/${hashtag}${cursor ? `?cursor=${cursor}` : ''}`),
 }
 
 export const followAPI = {

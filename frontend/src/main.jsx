@@ -20,11 +20,19 @@ const queryClient = new QueryClient({
 
 // Auth initializer component
 function AuthInitializer({ children }) {
-  const verifyToken = useAuthStore(state => state.verifyToken)
+  const [ready, setReady] = React.useState(false)
 
   useEffect(() => {
-    verifyToken()
-  }, [verifyToken])
+    useAuthStore.getState().verifyToken().finally(() => setReady(true))
+  }, [])
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen bg-darker flex items-center justify-center">
+        <div className="w-8 h-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    )
+  }
 
   return children
 }

@@ -2,13 +2,15 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 let eventSource = null
 
-export const connectSSE = (token, { onTweet, onConnected, onDisconnected } = {}) => {
+export const connectSSE = ({ onTweet, onConnected, onDisconnected } = {}) => {
   if (eventSource) {
     eventSource.close()
   }
 
+  // withCredentials: true sends the httpOnly cookie automatically
   eventSource = new EventSource(
-    `${API_URL}/api/v1/timeline/stream?token=${encodeURIComponent(token)}`
+    `${API_URL}/api/v1/timeline/stream`,
+    { withCredentials: true }
   )
 
   eventSource.onopen = () => {

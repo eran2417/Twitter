@@ -2,7 +2,7 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const { db, kafkaProducer, logger, authenticate, optionalAuth } = require('../../shared');
 const redisClient = require('../../shared/services/redis');
-const { HOT_USER_THRESHOLD, CACHE_KEYS, CACHE_TTL, FEED_LIMITS, TWEET_CONSTRAINTS } = require('../constants');
+const { HOT_USER_THRESHOLD, CACHE_KEYS, CACHE_TTL, FEED_LIMITS, TWEET_CONSTRAINTS } = require('../../shared/constants');
 const { publishTweetEvents } = require('../services/tweetEvents');
 
 const router = express.Router();
@@ -61,16 +61,18 @@ router.post('/', authenticate,
         logger.error('Background event publishing failed:', err)
       );
 
-      // Determine feed strategy: Check if user is hot (>5000 followers)
+      // Determine feed strategy: check hot_users Redis set (maintained by feedConsumer on follow/unfollow)
       let isHotUser = false;
       try {
-        const userResult = await db.query(
-          'SELECT follower_count FROM users WHERE id = $1',
-          [req.user.id]
-        );
-        isHotUser = userResult.rows.length > 0 && userResult.rows[0].follower_count >= HOT_USER_THRESHOLD;
+        isHotUser = await redisClient.sismember(CACHE_KEYS.HOT_USERS, req.user.id.toString()) === 1;
       } catch (error) {
-        logger.warn('Failed to determine hot user status:', error.message);
+        logger.warn('Failed to determine hot user status from Redis, falling back to DB:', error.message);
+        try {
+          const userResult = await db.query('SELECT follower_count FROM users WHERE id = $1', [req.user.id]);
+          isHotUser = userResult.rows.length > 0 && userResult.rows[0].follower_count >= HOT_USER_THRESHOLD;
+        } catch (dbError) {
+          logger.warn('DB fallback for hot user check also failed:', dbError.message);
+        }
       }
 
       // For non-hot users: Fan-out tweet to followers' Redis caches
@@ -87,9 +89,9 @@ router.post('/', authenticate,
               const cacheKey = `feed:${follower_id}`;
               const feedData = await redisClient.helper.get(cacheKey);
               if (feedData) {
-                // Prepend new tweet to cached feed
+                // Prepend only the tweet ID + created_at — full data served from tweet:{id} cache at read time
                 const feed = Array.isArray(feedData) ? feedData : JSON.parse(feedData);
-                feed.unshift(result);
+                feed.unshift({ id: result.id, created_at: result.created_at });
                 feed.splice(FEED_LIMITS.MAX_CACHED_TWEETS); // Keep only max tweets
                 await redisClient.helper.set(cacheKey, feed, CACHE_TTL.FEED);
               }
@@ -106,18 +108,8 @@ router.post('/', authenticate,
         logger.info(`Hot user ${req.user.id} - skipping fan-out, using pull-based for followers`);
       }
 
-      // Invalidate creator's timeline and feed caches (they just posted new content)
-      await Promise.all([
-        redisClient.helper.delPattern(`timeline:${req.user.id}:*`),
-        redisClient.helper.del(CACHE_KEYS.FEED(req.user.id))
-      ]);
-
-      // For non-hot users: feed caches already updated via fan-out above
-      // For hot users: followers will see tweet on next cache refresh (TTL-based expiration)
+      // Author's own feed is not affected — home timeline shows followee tweets only
       logger.debug(`Tweet cache strategy: ${isHotUser ? 'TTL-based' : 'fan-out'}`);
-
-      // Notify the author's own SSE connection so their feed updates instantly
-      redisClient.publish(`sse:feed:${req.user.id}`, JSON.stringify(result)).catch(() => {});
 
       logger.info(`Tweet created by user ${req.user.id}`);
 
@@ -132,7 +124,7 @@ router.post('/', authenticate,
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
     const { id } = req.params;
-    const userId = req.user?.userId || null;
+    const userId = req.user?.id || null;
 
     const cacheKey = `tweet:${id}`;
     const cached = await redisClient.helper.get(cacheKey);
@@ -277,7 +269,6 @@ router.delete('/:id', authenticate, async (req, res, next) => {
     // Invalidate caches
     await Promise.all([
       redisClient.helper.del(`tweet:${id}`),
-      redisClient.helper.delPattern(`timeline:${req.user.id}:*`),
       redisClient.helper.del(CACHE_KEYS.FEED(req.user.id))
     ]);
 
@@ -292,7 +283,7 @@ router.post('/:id/retweet', authenticate, async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    await db.transaction(async (client) => {
+    const retweetedAt = await db.transaction(async (client) => {
       // Check if already retweeted
       const existingRetweet = await client.query(
         'SELECT 1 FROM retweets WHERE user_id = $1 AND tweet_id = $2',
@@ -303,18 +294,39 @@ router.post('/:id/retweet', authenticate, async (req, res, next) => {
         throw { statusCode: 400, message: 'Tweet already retweeted' };
       }
 
-      // Insert retweet
-      await client.query(
-        'INSERT INTO retweets (user_id, tweet_id) VALUES ($1, $2)',
+      // Insert retweet — retweet_count updated by DB trigger
+      const result = await client.query(
+        'INSERT INTO retweets (user_id, tweet_id) VALUES ($1, $2) RETURNING created_at',
         [req.user.id, id]
       );
-
-      // Update retweet count
-      await client.query(
-        'UPDATE tweets SET retweet_count = retweet_count + 1 WHERE id = $1',
-        [id]
-      );
+      return result.rows[0].created_at;
     });
+
+    // Fetch full tweet with retweet metadata to return to client
+    const tweetResult = await db.query(
+      `SELECT t.id, t.user_id, t.content, t.reply_to_tweet_id, t.media_urls,
+              t.hashtags, t.mentions, t.like_count, t.retweet_count, t.reply_count,
+              t.created_at, u.username, u.display_name, u.avatar_url, u.verified,
+              CASE WHEN l.user_id IS NOT NULL THEN true ELSE false END as liked,
+              true as retweeted,
+              true as is_retweet,
+              ru.username as retweeted_by_username,
+              ru.display_name as retweeted_by_display_name,
+              $3::timestamptz as sort_time
+       FROM tweets t
+       JOIN users u ON t.user_id = u.id
+       JOIN users ru ON ru.id = $2
+       LEFT JOIN likes l ON t.id = l.tweet_id AND l.user_id = $2
+       WHERE t.id = $1`,
+      [id, req.user.id, retweetedAt],
+      { write: false }
+    );
+
+    if (tweetResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Tweet not found' });
+    }
+
+    const retweetData = tweetResult.rows[0];
 
     // Publish to Kafka
     try {
@@ -323,35 +335,24 @@ router.post('/:id/retweet', authenticate, async (req, res, next) => {
       logger.error('Failed to publish tweet retweeted event:', kafkaError);
     }
 
-    // Example: Notify tweet author about the retweet (call notification service)
+    // Notify tweet author
     try {
-      // Get tweet author from database
-      const tweetResult = await db.query(
-        'SELECT user_id FROM tweets WHERE id = $1',
-        [id],
-        { write: false }
-      );
-
-      if (tweetResult.rows.length > 0) {
-        const tweetAuthorId = tweetResult.rows[0].user_id;
-
-        // Don't notify if user retweeted their own tweet
-        if (tweetAuthorId !== req.user.id) {
-          await kafkaProducer.publishNotification(tweetAuthorId, 'tweet_retweeted', {
-            message: `Your tweet was retweeted`,
-            tweet_id: id,
-            from_user_id: req.user.id
-          });
-        }
+      const tweetAuthorId = tweetResult.rows[0].user_id;
+      if (tweetAuthorId !== req.user.id) {
+        await kafkaProducer.publishNotification(tweetAuthorId, 'tweet_retweeted', {
+          message: `Your tweet was retweeted`,
+          tweet_id: id,
+          from_user_id: req.user.id
+        });
       }
     } catch (error) {
       logger.warn('Failed to queue retweet notification:', error.message);
     }
 
-    // Invalidate caches
+    // Invalidate tweet cache so retweet_count is fresh
     await redisClient.helper.del(`tweet:${id}`);
 
-    res.json({ message: 'Tweet retweeted successfully' });
+    res.json(retweetData);
   } catch (error) {
     next(error);
   }
@@ -372,12 +373,7 @@ router.delete('/:id/retweet', authenticate, async (req, res, next) => {
         throw { statusCode: 404, message: 'Retweet not found' };
       }
 
-      // Update retweet count
-      await client.query(
-        'UPDATE tweets SET retweet_count = retweet_count - 1 WHERE id = $1 AND retweet_count > 0',
-        [id]
-      );
-
+      // retweet_count decremented by DB trigger on DELETE from retweets
       return deleteResult;
     });
 

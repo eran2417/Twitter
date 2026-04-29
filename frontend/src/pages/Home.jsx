@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { timelineAPI } from '../api/client'
 import { connectSSE, disconnectSSE } from '../api/sse'
 import { useAuthStore } from '../stores/authStore'
@@ -8,74 +8,45 @@ import TweetCard from '../components/TweetCard'
 import { Loader2 } from 'lucide-react'
 
 export default function Home() {
-  const { user, token, isAuthenticated } = useAuthStore()
-  const [tweets, setTweets] = useState([])
-  const [cursor, setCursor] = useState(null)
-  const [hasMore, setHasMore] = useState(true)
-  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const { user, isAuthenticated } = useAuthStore()
+  const queryClient = useQueryClient()
   const [sseConnected, setSseConnected] = useState(false)
-  
-  // Check if token exists in localStorage or in store
-  const hasToken = token || localStorage.getItem('token')
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['timeline', null],
-    queryFn: () => timelineAPI.getTimeline({ limit: 5, cursor: null }),
-    enabled: !!hasToken,
-    refetchInterval: sseConnected ? false : 30000, // poll only when SSE is down
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: ['timeline', user?.id ?? null],
+    queryFn: ({ pageParam }) => timelineAPI.getTimeline(pageParam),
+    getNextPageParam: (lastPage) => lastPage?.data?.pagination?.nextCursor ?? undefined,
+    enabled: isAuthenticated,
+    staleTime: Infinity,
+    refetchInterval: sseConnected ? false : 30000,
   })
 
-  if (error) {
-    console.error('Error in Home component:', error)
-    console.error('Error details:', error.response?.data || error.message)
-  }
+  const tweets = data?.pages.flatMap(p => p.data?.data?.tweets ?? []) ?? []
 
   useEffect(() => {
-    console.log('=== Home.jsx useEffect triggered ===')
-    console.log('data:', data)
-    console.log('data?.data:', data?.data)
-    console.log('data?.data?.tweets:', data?.data?.tweets)
-    console.log('Is array?', Array.isArray(data?.data?.tweets))
-    console.log('Array length:', data?.data?.tweets?.length)
-
-    if (data) {
-      console.log('Full API Response:', data)
-      console.log('Pagination info:', data.pagination)
-    }
-    if (data?.data?.tweets && Array.isArray(data.data.tweets)) {
-      console.log('Setting tweets with', data.data.tweets.length, 'items')
-      setTweets(data.data.tweets)
-      setCursor(data.pagination?.nextCursor)
-      setHasMore(data.pagination?.hasMore || false)
-    } else {
-      console.warn('Tweets not found or not an array')
-    }
-  }, [data])
-
-  const loadMore = async () => {
-    if (!cursor || isLoadingMore) return
-    
-    setIsLoadingMore(true)
-    try {
-      const response = await timelineAPI.getTimeline({ limit: 5, cursor })
-      if (response.data?.tweets) {
-        setTweets((prevTweets) => [...prevTweets, ...response.data.tweets])
-        setCursor(response.pagination?.nextCursor)
-        setHasMore(response.pagination?.hasMore || false)
-      }
-    } catch (err) {
-      console.error('Error loading more tweets:', err)
-    } finally {
-      setIsLoadingMore(false)
-    }
-  }
-
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      connectSSE(token, {
+    if (isAuthenticated) {
+      connectSSE({
         onTweet: (newTweet) => {
-          setTweets((prevTweets) => [newTweet, ...prevTweets])
+          queryClient.setQueryData(['timeline', user?.id ?? null], (old) => {
+            if (!old) return old
+            const firstPage = old.pages[0]
+            return {
+              ...old,
+              pages: [
+                {
+                  ...firstPage,
+                  data: {
+                    ...firstPage.data,
+                    data: {
+                      ...firstPage.data?.data,
+                      tweets: [newTweet, ...(firstPage.data?.data?.tweets ?? [])]
+                    }
+                  }
+                },
+                ...old.pages.slice(1)
+              ]
+            }
+          })
         },
         onConnected: () => setSseConnected(true),
         onDisconnected: () => setSseConnected(false),
@@ -85,7 +56,7 @@ export default function Home() {
         disconnectSSE()
       }
     }
-  }, [])
+  }, [isAuthenticated])
 
   if (error) {
     return (
@@ -111,25 +82,24 @@ export default function Home() {
           <div className="flex items-center justify-center p-8">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
-        ) : tweets?.length === 0 ? (
+        ) : tweets.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             <p>No chirps yet. Follow some users or create your first chirp!</p>
           </div>
         ) : (
           <>
-            {tweets?.map((tweet) => (
+            {tweets.map((tweet) => (
               <TweetCard key={tweet.id} tweet={tweet} />
             ))}
-            
-            {/* Load More Button */}
-            {hasMore && (
+
+            {hasNextPage && (
               <div className="p-4 text-center border-t border-gray-800">
                 <button
-                  onClick={loadMore}
-                  disabled={isLoadingMore}
+                  onClick={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
                   className="px-4 py-2 text-primary hover:bg-gray-900/50 rounded-full disabled:opacity-50"
                 >
-                  {isLoadingMore ? (
+                  {isFetchingNextPage ? (
                     <Loader2 className="w-4 h-4 inline-block animate-spin" />
                   ) : (
                     'Load more chirps'

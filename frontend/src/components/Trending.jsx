@@ -5,7 +5,7 @@ import { Hash } from 'lucide-react'
 export default function Trending() {
   const { data: trending, isLoading } = useQuery({
     queryKey: ['trending'],
-    queryFn: () => timelineAPI.getTrending({ limit: 10 }),
+    queryFn: () => timelineAPI.getTrending(),
     refetchInterval: 60000, // Refresh every minute
     select: (res) => res.data, // Extract data from axios response
   })
