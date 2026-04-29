@@ -224,6 +224,34 @@ const indexUser = async (user) => {
 };
 
 /**
+ * Increment or decrement followers_count for a user in ES (no DB call needed)
+ */
+const updateUserFollowerCount = async (userId, delta) => {
+  try {
+    await client.update({
+      index: USERS_INDEX,
+      id: userId.toString(),
+      body: {
+        script: {
+          source: 'ctx._source.followers_count = Math.max(0, ctx._source.followers_count + params.delta)',
+          params: { delta }
+        }
+      },
+      refresh: true
+    });
+    logger.debug(`Updated followers_count for user ${userId} by ${delta}`);
+    return true;
+  } catch (error) {
+    if (error.meta?.statusCode === 404) {
+      logger.warn(`User ${userId} not found in ES index, skipping follower count update`);
+      return false;
+    }
+    logger.warn('Error updating user follower count in ES:', error.message);
+    throw error;
+  }
+};
+
+/**
  * Delete a tweet from the index
  */
 const deleteTweet = async (tweetId) => {
@@ -496,6 +524,7 @@ module.exports = {
   isConnected: () => isConnected,
   indexTweet,
   indexUser,
+  updateUserFollowerCount,
   deleteTweet,
   searchTweets,
   searchUsers,

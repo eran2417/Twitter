@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { userAPI, followAPI } from '../api/client'
+import { searchAPI, followAPI } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import { Search, UserPlus, UserMinus, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -13,7 +13,7 @@ export default function SearchUsers() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['userSearch', searchTerm],
-    queryFn: () => userAPI.search(searchTerm),
+    queryFn: () => searchAPI.searchUsers(searchTerm),
     enabled: searchTerm.length >= 1,
     staleTime: 30000,
   })
