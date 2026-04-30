@@ -252,6 +252,35 @@ const updateUserFollowerCount = async (userId, delta) => {
 };
 
 /**
+ * Increment or decrement like_count / retweet_count using a painless script (no DB needed)
+ */
+const incrementTweetCount = async (tweetId, field, delta) => {
+  try {
+    await client.update({
+      index: TWEETS_INDEX,
+      id: tweetId.toString(),
+      body: {
+        script: {
+          source: `ctx._source.${field} = Math.max(0, (ctx._source.${field} ?: 0) + params.delta)`,
+          lang: 'painless',
+          params: { delta }
+        }
+      },
+      refresh: true
+    });
+    logger.debug(`Incremented ${field} by ${delta} for tweet ${tweetId}`);
+    return true;
+  } catch (error) {
+    if (error.meta?.statusCode === 404) {
+      logger.warn(`Tweet ${tweetId} not found in ES for count update`);
+      return false;
+    }
+    logger.warn(`Error incrementing ${field} for tweet ${tweetId}:`, error.message);
+    return false;
+  }
+};
+
+/**
  * Delete a tweet from the index
  */
 const deleteTweet = async (tweetId) => {

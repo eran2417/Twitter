@@ -187,12 +187,9 @@ router.post('/:id/like', authenticate, async (req, res, next) => {
       );
     });
 
-    // Publish to Kafka
-    try {
-      await kafkaProducer.publishTweetLiked(id, req.user.id);
-    } catch (kafkaError) {
-      logger.error('Failed to publish tweet liked event:', kafkaError);
-    }
+    kafkaProducer.publishTweetLiked(id, req.user.id).catch(err =>
+      logger.error('Failed to publish tweet liked event:', err)
+    );
 
     // Notify tweet author about the like via Kafka
     try {
@@ -244,6 +241,10 @@ router.delete('/:id/like', authenticate, async (req, res, next) => {
     }
 
     await redisClient.helper.del(`tweet:${id}`);
+
+    kafkaProducer.publishTweetUnliked(id, req.user.id).catch(err =>
+      logger.error('Failed to publish tweet unliked event:', err)
+    );
 
     res.json({ message: 'Tweet unliked successfully' });
   } catch (error) {
@@ -328,12 +329,9 @@ router.post('/:id/retweet', authenticate, async (req, res, next) => {
 
     const retweetData = tweetResult.rows[0];
 
-    // Publish to Kafka
-    try {
-      await kafkaProducer.publishTweetRetweeted(id, req.user.id);
-    } catch (kafkaError) {
-      logger.error('Failed to publish tweet retweeted event:', kafkaError);
-    }
+    kafkaProducer.publishTweetRetweeted(id, req.user.id).catch(err =>
+      logger.error('Failed to publish tweet retweeted event:', err)
+    );
 
     // Notify tweet author
     try {
@@ -378,6 +376,10 @@ router.delete('/:id/retweet', authenticate, async (req, res, next) => {
     });
 
     await redisClient.helper.del(`tweet:${id}`);
+
+    kafkaProducer.publishTweetUnretweeted(id, req.user.id).catch(err =>
+      logger.error('Failed to publish tweet unretweeted event:', err)
+    );
 
     res.json({ message: 'Retweet removed successfully' });
   } catch (error) {
