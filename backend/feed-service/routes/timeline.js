@@ -28,6 +28,7 @@ async function getNonHotFolloweeIds(userId, excludeUserIds, cursorTimestamp, cur
     FROM follows f
     JOIN tweets t ON t.user_id = f.following_id
     WHERE f.follower_id = $1
+    AND t.user_id != $1
     ${excludeClause}
     ${cursorClause}
     ORDER BY t.created_at DESC, t.id DESC
@@ -195,7 +196,7 @@ router.get('/', authenticate, async (req, res) => {
 
         if (filtered.length > 0) {
           // Cursor within cached window — serve from cache
-          fanoutIdRows = filtered;
+          fanoutIdRows = filtered.slice(0, pageLimit + 1);
         } else if (cursorTimestamp) {
           // Cursor beyond cached window — fall back to DB
           logger.debug(`Cache exhausted for user ${userId}, falling back to DB with cursor`);
@@ -208,12 +209,13 @@ router.get('/', authenticate, async (req, res) => {
           redisClient.helper.set(CACHE_KEYS.FEED(userId), allRows, CACHE_TTL.FEED).catch(() => {});
         }
         // Apply cursor filter on fresh rows for current page
-        fanoutIdRows = cursorTimestamp
+        fanoutIdRows = (cursorTimestamp
           ? allRows.filter(t =>
               new Date(t.created_at) < new Date(cursorTimestamp) ||
               (t.created_at === cursorTimestamp && parseInt(t.id) < parseInt(cursorId))
             )
-          : allRows;
+          : allRows
+        ).slice(0, pageLimit + 1);
       }
     } catch (err) {
       logger.warn('Failed to read fan-out cache, falling back to DB:', err?.message || err);
